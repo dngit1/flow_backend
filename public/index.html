@@ -733,6 +733,14 @@
           // status doesn't apply here (futures use polling, not Alpaca) -
           // skip both, and label clearly instead of showing a misleading
           // "Live Feed Connected" that's really about a different market.
+          //
+          // Also explicitly tear down any flow subscription left over from
+          // a PREVIOUS stock ticker in this panel - without this, switching
+          // e.g. QQQ -> NQU6 leaves QQQ's option flow silently still
+          // running server-side, and it shows up mislabeled with the new
+          // futures symbol's name since the sidebar just reads panel.symbol.
+          panel.sendWS({ type: 'unwatch_flow' });
+          panel.pendingWatchExpiration = null;
           panel.setStatus('(delayed)', '#2b3548');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
