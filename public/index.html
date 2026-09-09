@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Stock Charts + Option Flow Sweeps</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #0b0e14;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .global-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      background-color: #0b0e14;
+      border-bottom: 1px solid #1f293d;
+      flex-shrink: 0;
+    }
+
+    .global-bar select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .panels-row {
+      display: flex;
+      flex-direction: row;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      border-right: 1px solid #1f293d;
+    }
+
+    .panel.hidden {
+      display: none;
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background-color: #0b0e14;
+      border-bottom: 1px solid #1f293d;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .toolbar label {
+      font-size: 13px;
+    }
+
+    .toolbar input {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      text-transform: uppercase;
+      width: 90px;
+    }
+
+    .toolbar button {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .toolbar button:hover {
+      background-color: #364153;
+    }
+
+    .toolbar select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      max-width: 150px;
+    }
+
+    .toolbar select:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .main-layout {
+      display: flex;
+      flex: 1;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .chart-wrapper {
+      position: relative;
+      flex: 1;
+      min-height: 300px;
+      min-width: 200px;
+      overflow: hidden;
+    }
+
+    .chart-error-banner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      background-color: #2b1414;
+      border: 1px solid #7a1f1f;
+      color: #ffb4b4;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      max-width: 85%;
+      text-align: center;
+      display: none;
+    }
+
+    .chart-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .ticker-overlay {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .ticker-symbol {
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .ticker-price {
+      font-size: 15px;
+      color: #00c853;
+    }
+
+    .status-badge {
+      font-size: 11px;
+      padding: 3px 7px;
+      border-radius: 4px;
+      background-color: #2b3548;
+      color: #8fa0be;
+    }
+
+    .flow-panel {
+      width: 240px;
+      flex-shrink: 0;
+      background-color: #131822;
+      border-left: 1px solid #1f293d;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .flow-title {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #8fa0be;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+
+    .flow-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .flow-card {
+      background-color: #1a2232;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border-left: 4px solid #8fa0be;
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .flow-card.call { border-left-color: #00c853; }
+    .flow-card.put { border-left-color: #ff5252; }
+
+    .flow-details {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .flow-strike { font-weight: bold; color: #ffffff; }
+    .flow-premium { color: #00c853; font-weight: 600; }
+    .flow-card.put .flow-premium { color: #ff5252; }
+  </style>
+
+  <!-- Lightweight Charts v4 Standalone -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+  <div class="global-bar">
+    <label><strong>Layout:</strong></label>
+    <select id="layout-select">
+      <option value="2">2 Windows</option>
+      <option value="1">1 Window</option>
+    </select>
+
+    <label><strong>Min chart marker:</strong></label>
+    <select id="marker-floor-select">
+      <option value="0">Show all</option>
+      <option value="10000">$10k+</option>
+      <option value="25000" selected>$25k+</option>
+      <option value="50000">$50k+</option>
+      <option value="100000">$100k+</option>
+      <option value="250000">$250k+</option>
+      <option value="500000">$500k+</option>
+      <option value="1000000">$1M+</option>
+    </select>
+  </div>
+
+  <div class="panels-row">
+
+  <div class="panel" data-panel-index="0">
+    <div class="toolbar">
+      <label><strong>Ticker:</strong></label>
+      <input type="text" class="ticker-input" value="AAPL" placeholder="e.g. AMD" />
+      <button class="search-btn">Load Chart</button>
+      <label><strong>Expiration:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="main-layout">
+      <div class="chart-wrapper">
+        <div class="ticker-overlay">
+          <span class="ticker-symbol">AAPL</span>
+          <span class="ticker-price">--</span>
+          <span class="status-badge">Disconnected</span>
+        </div>
+        <div class="chart-container"></div>
+        <div class="chart-error-banner"></div>
+      </div>
+      <div class="flow-panel">
+        <div class="flow-title">Live Option Sweeps</div>
+        <div class="flow-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" data-panel-index="1">
+    <div class="toolbar">
+      <label><strong>Ticker:</strong></label>
+      <input type="text" class="ticker-input" value="QQQ" placeholder="e.g. AMD" />
+      <button class="search-btn">Load Chart</button>
+      <label><strong>Expiration:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="main-layout">
+      <div class="chart-wrapper">
+        <div class="ticker-overlay">
+          <span class="ticker-symbol">QQQ</span>
+          <span class="ticker-price">--</span>
+          <span class="status-badge">Disconnected</span>
+        </div>
+        <div class="chart-container"></div>
+        <div class="chart-error-banner"></div>
+      </div>
+      <div class="flow-panel">
+        <div class="flow-title">Live Option Sweeps</div>
+        <div class="flow-list"></div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+
+  <script>
+    // -------------------------------------------------------------
+    // No API keys here anymore - everything routes through your own
+    // backend, which holds the real Alpaca/Twelve Data/Tradier
+    // credentials and manages the shared upstream connections.
+    // Change these if your backend runs somewhere other than localhost.
+    // -------------------------------------------------------------
+    // Since this file is now served BY the backend itself (same origin),
+    // derive the URLs automatically instead of hardcoding a domain - this
+    // keeps working correctly whether it's accessed via xnlflow.com, a
+    // Render .onrender.com URL, or localhost during testing.
+    const BACKEND_HTTP = window.location.origin;
+    const BACKEND_WS = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+    const MIN_FLOW_PREMIUM = 25000; // client-side filter on incoming flow events
+    let CHART_MARKER_PREMIUM_FLOOR = 25000; // adjustable live via the "Min chart marker" dropdown
+    const CHART_MARKER_MAX = 12; // cap markers per chart so it stays readable
+    const MARKER_SIZE = 2; // Lightweight Charts marker size - larger = further from the candle body
+
+    // -------------------------------------------------------------
+    // SHARED HELPERS
+    // -------------------------------------------------------------
+    async function fetchHistoricalBars(symbol) {
+      let response;
+      try {
+        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}`);
+      } catch (networkErr) {
+        throw new Error(`Can't reach the backend at ${BACKEND_HTTP} - it may be waking up from sleep (Render free tier), try again in a moment`);
+      }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
+      if (!data.bars || data.bars.length === 0) throw new Error('No bars returned for this symbol');
+      return data.bars;
+    }
+
+    async function fetchAllExpirations(symbol) {
+      const response = await fetch(`${BACKEND_HTTP}/api/expirations?symbol=${encodeURIComponent(symbol)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
+      if (!data.expirations || data.expirations.length === 0) throw new Error('No expirations returned');
+      return data.expirations;
+    }
+
+    function formatExpirationLabel(dateStr) {
+      const d = new Date(`${dateStr}T00:00:00Z`);
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    }
+
+    function formatTradeTime(timestampMs) {
+      return new Date(timestampMs).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', second: '2-digit',
+      });
+    }
+
+    // -------------------------------------------------------------
+    // PANEL FACTORY - each panel owns its own WebSocket connection to
+    // the backend. The backend merges every connected panel's (and every
+    // other visitor's) symbols into ONE shared Alpaca connection and ONE
+    // shared Tradier session - panels here don't need to know or care
+    // about that; they just subscribe/unsubscribe for themselves.
+    // -------------------------------------------------------------
+    function createPanel(index, defaultSymbol) {
+      const root = document.querySelector(`[data-panel-index="${index}"]`);
+      const els = {
+        tickerInput: root.querySelector('.ticker-input'),
+        searchBtn: root.querySelector('.search-btn'),
+        expirationSelect: root.querySelector('.expiration-select'),
+        tickerSymbol: root.querySelector('.ticker-symbol'),
+        tickerPrice: root.querySelector('.ticker-price'),
+        statusBadge: root.querySelector('.status-badge'),
+        chartContainer: root.querySelector('.chart-container'),
+        chartErrorBanner: root.querySelector('.chart-error-banner'),
+        flowList: root.querySelector('.flow-list'),
+      };
+
+      const chart = LightweightCharts.createChart(els.chartContainer, {
+        autoSize: true,
+        layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
+        timeScale: { timeVisible: true, secondsVisible: false, barSpacing: 8 },
+        rightPriceScale: { scaleMargins: { top: 0.3, bottom: 0.15 } },
+      });
+
+      const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#00c853',
+        downColor: '#ff5252',
+        borderVisible: false,
+        wickUpColor: '#00c853',
+        wickDownColor: '#ff5252',
+      });
+
+      const panel = {
+        index,
+        symbol: defaultSymbol,
+        active: true,
+        hasLoadedOnce: false, // becomes true after the first successful chart load
+        chart,
+        candlestickSeries,
+        flowMarkers: [],
+        lastBarTime: null,
+        lastBarPrice: 0,
+        lastBarOpen: 0,
+        els,
+        ws: null,
+        wsQueue: [],
+      };
+
+      // ---- backend WebSocket (one per panel) ----
+      function connectWS() {
+        panel.ws = new WebSocket(BACKEND_WS);
+
+        panel.ws.onopen = () => {
+          panel.wsQueue.forEach((m) => panel.ws.send(JSON.stringify(m)));
+          panel.wsQueue = [];
+
+          // On a genuine reconnect (dropped connection, network blip, Render
+          // idle timeout, etc.) the backend has no memory of what this
+          // panel was watching - re-send the current subscriptions so the
+          // panel actually resumes live data instead of going silently
+          // stale. Guarded by hasLoadedOnce so this doesn't fire before the
+          // very first chart load has even picked a symbol/expiration yet.
+          if (panel.hasLoadedOnce && panel.active) {
+            panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
+            const currentExpiration = els.expirationSelect.value;
+            if (currentExpiration) panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration: currentExpiration });
+          }
+        };
+
+        panel.ws.onmessage = (event) => {
+          let msg;
+          try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+          if (msg.type === 'price' && msg.symbol === panel.symbol) {
+            panel.handlePriceTick(msg.price, msg.timeMs);
+          } else if (msg.type === 'flow') {
+            if (msg.premium < MIN_FLOW_PREMIUM) return;
+            panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side);
+          } else if (msg.type === 'flow_watching') {
+            console.log(`[flow:${panel.symbol}] watching ${msg.contractCount} contracts, expiration ${msg.expiration}`);
+          } else if (msg.type === 'flow_error') {
+            console.error(`[flow:${panel.symbol}] ${msg.error}`);
+          } else if (msg.type === 'alpaca_status') {
+            if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
+            else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
+            else panel.setStatus('Disconnected');
+          }
+        };
+
+        panel.ws.onerror = (err) => console.error(`[ws:${panel.symbol}] error`, err);
+        panel.ws.onclose = () => {
+          panel.setStatus('Disconnected');
+          // simple auto-reconnect after a short delay
+          setTimeout(connectWS, 2000);
+        };
+      }
+      connectWS();
+
+      panel.sendWS = function (msg) {
+        if (panel.ws && panel.ws.readyState === WebSocket.OPEN) {
+          panel.ws.send(JSON.stringify(msg));
+        } else {
+          panel.wsQueue.push(msg);
+        }
+      };
+
+      panel.setStatus = function (text, bg) {
+        els.statusBadge.innerText = text;
+        if (bg) els.statusBadge.style.backgroundColor = bg;
+      };
+
+      panel.showChartError = function (message) {
+        if (!message) { els.chartErrorBanner.style.display = 'none'; return; }
+        els.chartErrorBanner.innerText = message;
+        els.chartErrorBanner.style.display = 'block';
+        console.error(`[chart:${panel.symbol}]`, message);
+      };
+
+      panel.centerLastCandle = function () {
+        const width = els.chartContainer.clientWidth || 600;
+        const barSpacing = chart.timeScale().options().barSpacing || 8;
+        const halfBars = Math.max(1, Math.floor(width / barSpacing / 2));
+        chart.timeScale().applyOptions({ rightOffset: halfBars });
+        chart.timeScale().scrollToPosition(halfBars, false);
+        chart.priceScale('right').applyOptions({ autoScale: true });
+      };
+
+      panel.pause = function () {
+        if (!panel.active) return;
+        panel.active = false;
+        panel.sendWS({ type: 'unsubscribe_price' });
+        panel.sendWS({ type: 'unwatch_flow' });
+      };
+
+      panel.resume = function () {
+        if (panel.active) return;
+        panel.active = true;
+        panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
+        const currentExpiration = els.expirationSelect.value;
+        if (currentExpiration) panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration: currentExpiration });
+        panel.centerLastCandle();
+      };
+
+      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr) {
+        const isCall = type === 'CALL';
+        const card = document.createElement('div');
+        card.className = `flow-card ${isCall ? 'call' : 'put'}`;
+        card.innerHTML = `
+          <div class="flow-details">
+            <span class="flow-strike">${panel.symbol} ${strike} ${type}</span>
+            <span style="color: #8fa0be; font-size: 11px;">${sideLabel || 'BOUGHT'}${timeStr ? ' &middot; ' + timeStr : ''}</span>
+          </div>
+          <span class="flow-premium">${premiumStr}</span>
+        `;
+        els.flowList.prepend(card);
+        if (els.flowList.children.length > 20) els.flowList.removeChild(els.flowList.lastChild);
+      };
+
+      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side) {
+        if (!panel.lastBarTime) return;
+
+        const isCall = type === 'CALL';
+        const formattedPrem = `$${(premiumVal / 1000).toFixed(0)}k`;
+        const sideLabel = side || 'BOUGHT';
+        const timeStr = timestamp ? formatTradeTime(timestamp) : '';
+
+        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr);
+
+        if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
+
+        // Every event gets its own marker - no combining same-minute
+        // same-side prints into one "Nx" label.
+        panel.flowMarkers.push({
+          time: panel.lastBarTime,
+          position: isCall ? 'belowBar' : 'aboveBar',
+          color: isCall ? '#00c853' : '#ff5252',
+          shape: isCall ? 'arrowUp' : 'arrowDown',
+          text: `${sideLabel} ${type} $${strike} (${formattedPrem})`,
+          size: MARKER_SIZE,
+          isCall,
+          side: sideLabel,
+        });
+        if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
+
+        candlestickSeries.setMarkers(panel.flowMarkers);
+      };
+
+      panel.handlePriceTick = function (tradePrice, timeMs) {
+        const tradeTime = Math.floor(timeMs / 1000);
+        const currentMinuteBucket = Math.floor(tradeTime / 60) * 60;
+
+        if (currentMinuteBucket > panel.lastBarTime) {
+          panel.lastBarTime = currentMinuteBucket;
+          panel.lastBarOpen = tradePrice;
+          candlestickSeries.update({
+            time: currentMinuteBucket, open: tradePrice, high: tradePrice, low: tradePrice, close: tradePrice,
+          });
+        } else {
+          candlestickSeries.update({
+            time: panel.lastBarTime,
+            open: panel.lastBarOpen,
+            high: Math.max(panel.lastBarPrice, tradePrice),
+            low: Math.min(panel.lastBarPrice, tradePrice),
+            close: tradePrice,
+          });
+        }
+
+        els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
+        els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
+        panel.lastBarPrice = tradePrice;
+      };
+
+      panel.watchFlow = function (expiration) {
+        if (!expiration) return;
+        panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration });
+      };
+
+      panel.loadExpirationsDropdown = async function () {
+        const select = els.expirationSelect;
+        select.disabled = true;
+        select.innerHTML = '<option value="">Loading...</option>';
+
+        try {
+          const dates = await fetchAllExpirations(panel.symbol);
+          select.innerHTML = dates.map((d) => `<option value="${d}">${formatExpirationLabel(d)}</option>`).join('');
+          select.disabled = false;
+          panel.watchFlow(select.value);
+        } catch (err) {
+          console.error(`[flow:${panel.symbol}] Failed to load expirations:`, err);
+          select.innerHTML = '<option value="">Failed to load</option>';
+        }
+      };
+
+      panel.loadInitialSeedData = async function (symbol) {
+        const previousSymbol = panel.symbol;
+        panel.symbol = symbol;
+
+        els.tickerSymbol.innerText = symbol;
+        els.tickerPrice.innerText = 'Loading...';
+        els.flowList.innerHTML = '';
+        panel.flowMarkers = [];
+        candlestickSeries.setMarkers([]);
+        panel.showChartError(null);
+        // Only show this placeholder on the very first load. On a ticker
+        // switch, the Alpaca connection itself hasn't changed - overwriting
+        // an already-accurate "Live Feed Connected" here would erase it
+        // and never get corrected, since status only re-broadcasts on an
+        // actual connection state CHANGE, not on every symbol switch.
+        if (!panel.hasLoadedOnce) panel.setStatus('Fetching price data...');
+
+        let seedCandles;
+        try {
+          seedCandles = await fetchHistoricalBars(symbol);
+          console.log(`[chart:${symbol}] Loaded ${seedCandles.length} real bars`, seedCandles[seedCandles.length - 1]);
+        } catch (err) {
+          console.error(`[chart:${symbol}] Historical bars failed to load:`, err);
+          panel.setStatus('Failed to load data', '#7a1f1f');
+          panel.showChartError(`Couldn't load price history: ${err.message}`);
+          els.tickerPrice.innerText = '--';
+          panel.symbol = previousSymbol;
+          return;
+        }
+
+        try {
+          candlestickSeries.setData(seedCandles);
+          panel.centerLastCandle();
+          console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
+        } catch (renderErr) {
+          console.error(`[chart:${symbol}] setData threw:`, renderErr);
+          panel.showChartError(`Chart failed to render candles: ${renderErr.message}`);
+          return;
+        }
+
+        const last = seedCandles[seedCandles.length - 1];
+        panel.lastBarTime = last.time;
+        panel.lastBarPrice = last.close;
+        panel.lastBarOpen = last.open;
+
+        els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
+        els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
+        // No setStatus('Connecting...') here on purpose - the badge already
+        // reflects the real Alpaca status pushed the moment this panel's
+        // WebSocket connected. Overwriting it with a hardcoded placeholder
+        // would erase an already-accurate "Live Feed Connected" and never
+        // get corrected again, since Alpaca's status only re-broadcasts on
+        // an actual state CHANGE, not every time a symbol gets subscribed.
+        panel.hasLoadedOnce = true;
+
+        // one WS message each - the backend handles merging this with
+        // every other connected browser's subscriptions
+        panel.sendWS({ type: 'subscribe_price', symbol });
+        panel.loadExpirationsDropdown();
+      };
+
+      els.searchBtn.addEventListener('click', () => {
+        const symbol = els.tickerInput.value.trim().toUpperCase();
+        if (symbol && symbol !== panel.symbol) panel.loadInitialSeedData(symbol);
+      });
+      els.tickerInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') els.searchBtn.click();
+      });
+      els.expirationSelect.addEventListener('change', (e) => {
+        panel.watchFlow(e.target.value);
+      });
+
+      window.addEventListener('resize', () => panel.centerLastCandle());
+
+      return panel;
+    }
+
+    const panels = [
+      createPanel(0, 'AAPL'),
+      createPanel(1, 'QQQ'),
+    ];
+
+    panels.forEach((p) => p.loadInitialSeedData(p.symbol));
+
+    // -------------------------------------------------------------
+    // LAYOUT: 1 window vs 2 windows
+    // -------------------------------------------------------------
+    document.getElementById('layout-select').addEventListener('change', (e) => {
+      const mode = e.target.value;
+      const secondPanelRoot = document.querySelector('[data-panel-index="1"]');
+
+      if (mode === '1') {
+        secondPanelRoot.classList.add('hidden');
+        panels[1].pause();
+      } else {
+        secondPanelRoot.classList.remove('hidden');
+        panels[1].resume();
+      }
+
+      requestAnimationFrame(() => {
+        panels[0].centerLastCandle();
+        if (mode === '2') panels[1].centerLastCandle();
+      });
+    });
+
+    // -------------------------------------------------------------
+    // MIN CHART MARKER: adjust CHART_MARKER_PREMIUM_FLOOR live.
+    // Applies to future flow events only - markers already drawn
+    // (or already excluded) don't retroactively change.
+    // -------------------------------------------------------------
+    document.getElementById('marker-floor-select').addEventListener('change', (e) => {
+      CHART_MARKER_PREMIUM_FLOOR = parseInt(e.target.value, 10);
+    });
+  </script>
+</body>
+</html>
