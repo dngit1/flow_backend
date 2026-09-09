@@ -1,0 +1,185 @@
+require('dotenv').config();
+
+const http = require('http');
+const crypto = require('crypto');
+const express = require('express');
+const { WebSocketServer, WebSocket } = require('ws');
+
+const { createAlpacaHub } = require('./lib/alpacaHub');
+const { createTradierHub } = require('./lib/tradierHub');
+const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
+const { createDataProxyRouter } = require('./lib/dataProxy');
+
+const {
+  ALPACA_KEY,
+  ALPACA_SECRET,
+  TWELVE_DATA_KEY,
+  TRADIER_TOKEN,
+  MASSIVE_API_KEY,
+  PORT = 3000,
+} = process.env;
+
+for (const [name, val] of Object.entries({ ALPACA_KEY, ALPACA_SECRET, TWELVE_DATA_KEY, TRADIER_TOKEN, MASSIVE_API_KEY })) {
+  if (!val) console.warn(`[startup] Warning: ${name} is not set - check your .env file`);
+}
+
+const app = express();
+// Allow the frontend to call this backend from any origin (localhost file,
+// Live Server, or wherever it's hosted) - without this, browsers block the
+// fetch() calls before they even reach the server, and it looks
+// indistinguishable from "server isn't running."
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+app.use(express.static('public')); // serve the frontend HTML/JS from here, see README
+
+// Track connected browser clients so hubs can push data back to them.
+// clientId -> WebSocket
+const browserClients = new Map();
+
+function sendToClient(clientId, message) {
+  const ws = browserClients.get(clientId);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
+}
+
+function broadcastPrice(symbol, payload) {
+  // Every client currently subscribed to this symbol gets the tick.
+  // (Reconciliation of "who wants what" happens in alpacaHub; here we just
+  // fan out to any client whose active symbol matches.)
+  for (const [clientId, ws] of browserClients) {
+    if (ws.readyState === WebSocket.OPEN && ws.watchedSymbol === symbol) {
+      ws.send(JSON.stringify({ type: 'price', symbol, ...payload }));
+    }
+  }
+}
+
+let currentAlpacaStatus = { status: 'disconnected', detail: null };
+
+const alpacaHub = createAlpacaHub({
+  apiKey: ALPACA_KEY,
+  apiSecret: ALPACA_SECRET,
+  onTrade: ({ symbol, price, timeMs }) => broadcastPrice(symbol, { price, timeMs }),
+  onStatus: (status, detail) => {
+    currentAlpacaStatus = { status, detail };
+    for (const ws of browserClients.values()) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'alpaca_status', status, detail }));
+    }
+  },
+});
+
+const tradierHub = createTradierHub({
+  token: TRADIER_TOKEN,
+  onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
+});
+
+const futuresHub = createFuturesHub({
+  apiKey: MASSIVE_API_KEY,
+  onPrice: (ticker, payload) => broadcastPrice(ticker, payload),
+});
+
+app.use('/api', createDataProxyRouter({
+  twelveDataKey: TWELVE_DATA_KEY,
+  tradierToken: TRADIER_TOKEN,
+  lastPriceOf: (symbol) => alpacaHub.lastPriceOf(symbol),
+  futuresHub,
+}));
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (ws) => {
+  const clientId = crypto.randomUUID();
+  ws.watchedSymbol = null;
+  ws.isAlive = true;
+  browserClients.set(clientId, ws);
+
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  // Tell this new client the CURRENT status right away - onStatus above
+  // only fires on future changes, so without this, anyone who connects
+  // after the upstream Alpaca connection already succeeded would never
+  // hear about it and stay stuck showing "Connecting..." forever.
+  ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
+
+  ws.on('message', async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
+
+    // ---- price subscription (Alpaca for stocks, Massive for futures) ----
+    if (msg.type === 'subscribe_price' && msg.symbol) {
+      const symbol = msg.symbol.toUpperCase();
+      if (ws.watchedSymbol) {
+        if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
+        else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+      }
+      ws.watchedSymbol = symbol;
+      if (isFuturesTicker(symbol)) futuresHub.subscribe(clientId, symbol);
+      else alpacaHub.subscribe(clientId, symbol);
+      return;
+    }
+
+    if (msg.type === 'unsubscribe_price') {
+      if (ws.watchedSymbol) {
+        if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
+        else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+      }
+      ws.watchedSymbol = null;
+      return;
+    }
+
+    // ---- option flow subscription (Tradier) ----
+    if (msg.type === 'watch_flow' && msg.symbol && msg.expiration) {
+      try {
+        const spotPrice = alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || msg.spotPrice || 0;
+        const count = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
+        sendToClient(clientId, { type: 'flow_watching', symbol: msg.symbol, expiration: msg.expiration, contractCount: count });
+      } catch (err) {
+        sendToClient(clientId, { type: 'flow_error', error: err.message });
+      }
+      return;
+    }
+
+    if (msg.type === 'unwatch_flow') {
+      tradierHub.unwatch(clientId);
+      return;
+    }
+  });
+
+  ws.on('close', () => {
+    if (ws.watchedSymbol) {
+      if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
+      else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+    }
+    tradierHub.unwatch(clientId);
+    browserClients.delete(clientId);
+  });
+});
+
+// Some network drops (proxy timeouts, laptop sleep, etc.) never send a
+// proper close frame, which would otherwise leave a "zombie" subscription
+// behind - still registered with alpacaHub/tradierHub and still receiving
+// (and duplicating) broadcasts, even though nothing is really listening.
+// This sweep pings every client every 30s; anyone that didn't respond to
+// the PREVIOUS ping gets forcibly terminated, which fires the 'close'
+// handler above and cleans up their subscriptions properly.
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30_000);
+
+wss.on('close', () => clearInterval(heartbeatInterval));
+
+server.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Browser WebSocket endpoint: ws://localhost:${PORT}/ws`);
+});
