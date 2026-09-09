@@ -29,10 +29,9 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
-app.use(express.static('public')); // serve the frontend HTML/JS from here, see README
 
-// Track connected browser clients so hubs can push data back to them.
-// clientId -> WebSocket
+app.use(express.static('public'));
+
 const browserClients = new Map();
 
 function sendToClient(clientId, message) {
@@ -43,9 +42,6 @@ function sendToClient(clientId, message) {
 }
 
 function broadcastPrice(symbol, payload) {
-  // Every client currently subscribed to this symbol gets the tick.
-  // (Reconciliation of "who wants what" happens in alpacaHub; here we just
-  // fan out to any client whose active symbol matches.)
   for (const [clientId, ws] of browserClients) {
     if (ws.readyState === WebSocket.OPEN && ws.watchedSymbol === symbol) {
       ws.send(JSON.stringify({ type: 'price', symbol, ...payload }));
@@ -53,11 +49,14 @@ function broadcastPrice(symbol, payload) {
   }
 }
 
+let currentAlpacaStatus = { status: 'disconnected', detail: null };
+
 const alpacaHub = createAlpacaHub({
   apiKey: ALPACA_KEY,
   apiSecret: ALPACA_SECRET,
   onTrade: ({ symbol, price, timeMs }) => broadcastPrice(symbol, { price, timeMs }),
   onStatus: (status, detail) => {
+    currentAlpacaStatus = { status, detail };
     for (const ws of browserClients.values()) {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'alpaca_status', status, detail }));
     }
@@ -82,17 +81,13 @@ wss.on('connection', (ws) => {
   const clientId = crypto.randomUUID();
   ws.watchedSymbol = null;
   browserClients.set(clientId, ws);
-  // Tell this new client the CURRENT status right away - onStatus above
-  // only fires on future changes, so without this, anyone who connects
-  // after the upstream Alpaca connection already succeeded would never
-  // hear about it and stay stuck showing "Connecting..." forever.
+
   ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
 
   ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
 
-    // ---- price subscription (Alpaca) ----
     if (msg.type === 'subscribe_price' && msg.symbol) {
       if (ws.watchedSymbol) alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
       ws.watchedSymbol = msg.symbol.toUpperCase();
@@ -106,7 +101,6 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // ---- option flow subscription (Tradier) ----
     if (msg.type === 'watch_flow' && msg.symbol && msg.expiration) {
       try {
         const spotPrice = alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || msg.spotPrice || 0;
