@@ -412,6 +412,13 @@
       });
     }
 
+    // Matches the backend's futuresHub.js pattern - e.g. ESZ5, NQZ5.
+    // Used purely for UI decisions (skip options/flow UI, different status
+    // label); the backend does its own authoritative routing regardless.
+    function isFuturesTicker(symbol) {
+      return /^[A-Z]{1,3}[FGHJKMNQUVXZ]\d$/.test(symbol);
+    }
+
     // -------------------------------------------------------------
     // PANEL FACTORY - each panel owns its own WebSocket connection to
     // the backend. The backend merges every connected panel's (and every
@@ -503,6 +510,10 @@
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
+            // Alpaca's connection status is global but irrelevant to futures
+            // panels (they use polling, not Alpaca) - don't let it stomp on
+            // the "Polling (free tier)" label those panels set themselves.
+            if (isFuturesTicker(panel.symbol)) return;
             if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
             else panel.setStatus('Disconnected');
@@ -711,18 +722,23 @@
 
         els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
         els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
-        // No setStatus('Connecting...') here on purpose - the badge already
-        // reflects the real Alpaca status pushed the moment this panel's
-        // WebSocket connected. Overwriting it with a hardcoded placeholder
-        // would erase an already-accurate "Live Feed Connected" and never
-        // get corrected again, since Alpaca's status only re-broadcasts on
-        // an actual state CHANGE, not every time a symbol gets subscribed.
         panel.hasLoadedOnce = true;
 
         // one WS message each - the backend handles merging this with
         // every other connected browser's subscriptions
         panel.sendWS({ type: 'subscribe_price', symbol });
-        panel.loadExpirationsDropdown();
+
+        if (isFuturesTicker(symbol)) {
+          // No options data exists for futures yet, and Alpaca's connection
+          // status doesn't apply here (futures use polling, not Alpaca) -
+          // skip both, and label clearly instead of showing a misleading
+          // "Live Feed Connected" that's really about a different market.
+          panel.setStatus('Polling (free tier, ~25s)', '#2b3548');
+          els.expirationSelect.disabled = true;
+          els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
+        } else {
+          panel.loadExpirationsDropdown();
+        }
       };
 
       els.searchBtn.addEventListener('click', () => {
