@@ -453,6 +453,7 @@
         symbol: defaultSymbol,
         active: true,
         hasLoadedOnce: false, // becomes true after the first successful chart load
+        pendingWatchExpiration: null, // tracks an unconfirmed watch_flow request for retry
         chart,
         candlestickSeries,
         flowMarkers: [],
@@ -496,8 +497,10 @@
             panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side);
           } else if (msg.type === 'flow_watching') {
             console.log(`[flow:${panel.symbol}] watching ${msg.contractCount} contracts, expiration ${msg.expiration}`);
+            if (msg.expiration === panel.pendingWatchExpiration) panel.pendingWatchExpiration = null;
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
+            panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
             if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
@@ -630,7 +633,18 @@
 
       panel.watchFlow = function (expiration) {
         if (!expiration) return;
+        panel.pendingWatchExpiration = expiration;
         panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration });
+
+        // Safety net: if no flow_watching confirmation arrives within 5s
+        // (message lost, connection hiccup, etc.), retry once automatically
+        // instead of silently staying unsubscribed with no visible sign.
+        setTimeout(() => {
+          if (panel.pendingWatchExpiration === expiration && panel.active && panel.symbol) {
+            console.warn(`[flow:${panel.symbol}] No confirmation received for ${expiration} - retrying`);
+            panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration });
+          }
+        }, 5000);
       };
 
       panel.loadExpirationsDropdown = async function () {
