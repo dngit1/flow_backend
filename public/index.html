@@ -733,7 +733,7 @@
           // status doesn't apply here (futures use polling, not Alpaca) -
           // skip both, and label clearly instead of showing a misleading
           // "Live Feed Connected" that's really about a different market.
-          panel.setStatus('Polling (free tier, ~25s)', '#2b3548');
+          panel.setStatus('Free tier (may be delayed)', '#2b3548');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
         } else {
