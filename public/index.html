@@ -373,7 +373,8 @@
 
     const MIN_FLOW_PREMIUM = 25000; // client-side filter on incoming flow events
     let CHART_MARKER_PREMIUM_FLOOR = 25000; // adjustable live via the "Min chart marker" dropdown
-    const CHART_MARKER_MAX = 12; // cap markers per chart so it stays readable
+    const CHART_MARKER_MAX = 30; // matches the sidebar's 30-entry cap
+    const SIDEBAR_FLOW_MAX = 30; // how many entries the sidebar list keeps
     const MARKER_SIZE = 2; // Lightweight Charts marker size - larger = further from the candle body
 
     // -------------------------------------------------------------
@@ -574,7 +575,7 @@
           <span class="flow-premium">${premiumStr}</span>
         `;
         els.flowList.prepend(card);
-        if (els.flowList.children.length > 20) els.flowList.removeChild(els.flowList.lastChild);
+        if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
       };
 
       panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side) {
