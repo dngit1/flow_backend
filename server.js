@@ -82,6 +82,11 @@ wss.on('connection', (ws) => {
   const clientId = crypto.randomUUID();
   ws.watchedSymbol = null;
   browserClients.set(clientId, ws);
+  // Tell this new client the CURRENT status right away - onStatus above
+  // only fires on future changes, so without this, anyone who connects
+  // after the upstream Alpaca connection already succeeded would never
+  // hear about it and stay stuck showing "Connecting..." forever.
+  ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
 
   ws.on('message', async (raw) => {
     let msg;
