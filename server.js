@@ -91,6 +91,20 @@ app.use('/api', createDataProxyRouter({
   futuresHub,
 }));
 
+// GET /api/premium-leaderboard - curated-symbol ranking by cumulative
+// option premium traded today. See tradierHub.js for the curated list
+// and the "no full-market scan" limitation.
+app.get('/api/premium-leaderboard', (req, res) => {
+  res.json(tradierHub.getLeaderboard());
+});
+
+// Fire-and-forget at startup - fetches near-the-money contracts for every
+// curated leaderboard symbol once. Doesn't block the server from starting;
+// the leaderboard just reports ready:false until this finishes.
+tradierHub.initLeaderboard().catch((err) => {
+  console.error('[startup] Leaderboard init failed:', err.message);
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
