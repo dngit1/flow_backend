@@ -120,8 +120,17 @@ wss.on('connection', (ws) => {
         else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
       }
       ws.watchedSymbol = symbol;
-      if (isFuturesTicker(symbol)) futuresHub.subscribe(clientId, symbol);
-      else alpacaHub.subscribe(clientId, symbol);
+      if (isFuturesTicker(symbol)) {
+        futuresHub.subscribe(clientId, symbol);
+      } else {
+        alpacaHub.subscribe(clientId, symbol);
+        // Re-confirm the CURRENT status directly to this client - not just
+        // a broadcast on future changes. Without this, a client whose badge
+        // got stuck on an unrelated error (e.g. a failed load for a
+        // different symbol) never gets corrected back to the true state,
+        // since a successful load intentionally doesn't touch the badge.
+        ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
+      }
       return;
     }
 
