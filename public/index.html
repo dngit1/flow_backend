@@ -679,6 +679,15 @@
         const previousSymbol = panel.symbol;
         panel.symbol = symbol;
 
+        // Tear down any previous ticker's flow subscription IMMEDIATELY,
+        // before attempting anything else. Without this, there's a window
+        // (during the bars fetch, and especially if it fails) where
+        // panel.symbol already says the NEW ticker but the OLD subscription
+        // is still delivering events - which get mislabeled with the new
+        // symbol's name since the sidebar/markers just read panel.symbol.
+        panel.sendWS({ type: 'unwatch_flow' });
+        panel.pendingWatchExpiration = null;
+
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
         els.flowList.innerHTML = '';
@@ -701,6 +710,12 @@
           panel.setStatus('Failed to load data', '#7a1f1f');
           panel.showChartError(`Couldn't load price history: ${err.message}`);
           els.tickerPrice.innerText = '--';
+          // Clear the chart too - leaving the OLD symbol's candles visible
+          // under the NEW (failed) symbol's label/ticker-overlay would be
+          // just as misleading as the stale-flow bug this whole change
+          // fixes. A failed load should show nothing, not something stale
+          // pretending to belong to the symbol that just failed.
+          candlestickSeries.setData([]);
           panel.symbol = previousSymbol;
           return;
         }
@@ -733,14 +748,6 @@
           // status doesn't apply here (futures use polling, not Alpaca) -
           // skip both, and label clearly instead of showing a misleading
           // "Live Feed Connected" that's really about a different market.
-          //
-          // Also explicitly tear down any flow subscription left over from
-          // a PREVIOUS stock ticker in this panel - without this, switching
-          // e.g. QQQ -> NQU6 leaves QQQ's option flow silently still
-          // running server-side, and it shows up mislabeled with the new
-          // futures symbol's name since the sidebar just reads panel.symbol.
-          panel.sendWS({ type: 'unwatch_flow' });
-          panel.pendingWatchExpiration = null;
           panel.setStatus('(delayed)', '#2b3548');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
