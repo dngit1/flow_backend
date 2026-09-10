@@ -189,7 +189,7 @@
     }
 
     .flow-panel {
-      width: 240px;
+      width: 190px;
       flex-shrink: 0;
       background-color: #131822;
       border-left: 1px solid #1f293d;
@@ -290,8 +290,8 @@
     <select id="marker-floor-select">
       <option value="0">Show all</option>
       <option value="10000">$10k+</option>
-      <option value="25000" selected>$25k+</option>
-      <option value="50000">$50k+</option>
+      <option value="25000">$25k+</option>
+      <option value="50000" selected>$50k+</option>
       <option value="100000">$100k+</option>
       <option value="250000">$250k+</option>
       <option value="500000">$500k+</option>
@@ -372,9 +372,11 @@
     const BACKEND_WS = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
     const MIN_FLOW_PREMIUM = 25000; // client-side filter on incoming flow events
-    let CHART_MARKER_PREMIUM_FLOOR = 25000; // adjustable live via the "Min chart marker" dropdown
-    const CHART_MARKER_MAX = 30; // matches the sidebar's 30-entry cap
-    const SIDEBAR_FLOW_MAX = 30; // how many entries the sidebar list keeps
+    let CHART_MARKER_PREMIUM_FLOOR = 50000; // adjustable live via the "Min chart marker" dropdown
+    const CHART_MARKER_MAX = 30; // caps only LARGE prints that clear the marker floor
+    const SIDEBAR_FLOW_MAX = 60; // caps EVERY event, so it fills faster than the chart -
+    // kept well above CHART_MARKER_MAX so a large print isn't likely to scroll out of
+    // the sidebar (pushed out by many smaller events) while still showing on the chart
     const MARKER_SIZE = 2; // Lightweight Charts marker size - larger = further from the candle body
 
     // -------------------------------------------------------------
