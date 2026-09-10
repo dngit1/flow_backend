@@ -98,6 +98,24 @@ app.get('/api/premium-leaderboard', (req, res) => {
   res.json(tradierHub.getLeaderboard());
 });
 
+// GET /api/premium?symbol=XYZ - on-demand call/put premium tracking for
+// ANY ticker, not just the curated leaderboard list. First check on a new
+// symbol sets up tracking (starts at $0) and returns immediately; premium
+// accumulates from that point forward on future checks.
+app.get('/api/premium', async (req, res) => {
+  const symbol = String(req.query.symbol || '').toUpperCase();
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+
+  try {
+    const spotPrice = alpacaHub.lastPriceOf(symbol) || null;
+    const result = await tradierHub.trackSymbol(symbol, spotPrice);
+    res.json(result);
+  } catch (err) {
+    console.error(`[premium] failed for ${symbol}:`, err.message);
+    res.status(502).json({ error: 'Unable to check premium for this ticker right now' });
+  }
+});
+
 // Fire-and-forget at startup - fetches near-the-money contracts for every
 // curated leaderboard symbol once. Doesn't block the server from starting;
 // the leaderboard just reports ready:false until this finishes.
