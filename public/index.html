@@ -84,9 +84,8 @@
 
     .leaderboard-item {
       display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
+      flex-direction: column;
+      gap: 2px;
       padding: 5px 6px;
       border-radius: 4px;
       cursor: pointer;
@@ -95,6 +94,13 @@
 
     .leaderboard-item:hover {
       background-color: #1f293d;
+    }
+
+    .leaderboard-item-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
     }
 
     .leaderboard-rank {
@@ -113,6 +119,17 @@
       color: #00c853;
       font-weight: 600;
     }
+
+    .leaderboard-split {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #8fa0be;
+      padding-left: 26px; /* lines up under the symbol, past the rank column */
+    }
+
+    .leaderboard-call { color: #00c853; }
+    .leaderboard-put { color: #ff5252; }
 
     .panels-row {
       display: flex;
@@ -906,9 +923,15 @@
 
     function leaderboardItemHtml(entry, rank) {
       return `<div class="leaderboard-item" data-symbol="${entry.symbol}">` +
+        `<div class="leaderboard-item-top">` +
         `<span class="leaderboard-rank">${rank}</span>` +
         `<span class="leaderboard-symbol">${entry.symbol}</span>` +
-        `<span class="leaderboard-total">${formatPremiumTotal(entry.total)}</span></div>`;
+        `<span class="leaderboard-total">${formatPremiumTotal(entry.total)}</span>` +
+        `</div>` +
+        `<div class="leaderboard-split">` +
+        `<span class="leaderboard-call">Calls ${formatPremiumTotal(entry.call)}</span>` +
+        `<span class="leaderboard-put">Puts ${formatPremiumTotal(entry.put)}</span>` +
+        `</div></div>`;
     }
 
     async function loadLeaderboard() {
