@@ -65,7 +65,7 @@
       border: 1px solid #1f293d;
       border-radius: 8px;
       padding: 12px;
-      min-width: 220px;
+      min-width: 260px;
       max-height: 340px;
       overflow-y: auto;
     }
@@ -82,10 +82,22 @@
       color: #8fa0be;
     }
 
+    .leaderboard-header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 0 6px 4px 6px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #1f293d;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .leaderboard-item {
       display: flex;
-      flex-direction: column;
-      gap: 2px;
+      align-items: baseline;
+      gap: 10px;
       padding: 5px 6px;
       border-radius: 4px;
       cursor: pointer;
@@ -94,13 +106,6 @@
 
     .leaderboard-item:hover {
       background-color: #1f293d;
-    }
-
-    .leaderboard-item-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
     }
 
     .leaderboard-rank {
@@ -115,21 +120,22 @@
       font-weight: 600;
     }
 
-    .leaderboard-total {
+    .leaderboard-symbol.call-heavy { color: #00c853; }
+    .leaderboard-symbol.put-heavy { color: #ff5252; }
+
+    .leaderboard-call {
       color: #00c853;
-      font-weight: 600;
+      font-size: 12px;
+      min-width: 46px;
+      text-align: right;
     }
 
-    .leaderboard-split {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      color: #8fa0be;
-      padding-left: 26px; /* lines up under the symbol, past the rank column */
+    .leaderboard-put {
+      color: #ff5252;
+      font-size: 12px;
+      min-width: 46px;
+      text-align: right;
     }
-
-    .leaderboard-call { color: #00c853; }
-    .leaderboard-put { color: #ff5252; }
 
     .panels-row {
       display: flex;
@@ -394,8 +400,19 @@
     <button id="leaderboard-btn" class="leaderboard-btn">Premium Leaderboard</button>
     <div id="leaderboard-panel" class="leaderboard-panel hidden">
       <h4>Top Option Premium Today</h4>
+      <div class="leaderboard-header">
+        <span class="leaderboard-rank"></span>
+        <span class="leaderboard-symbol"></span>
+        <span class="leaderboard-call">Calls</span>
+        <span class="leaderboard-put">Puts</span>
+      </div>
       <div id="leaderboard-list">Loading...</div>
     </div>
+
+    <label><strong>Check Premium:</strong></label>
+    <input type="text" id="premium-check-input" class="ticker-input" placeholder="e.g. AAPL" style="width: 80px;" />
+    <button id="premium-check-btn" class="leaderboard-btn">Check</button>
+    <span id="premium-check-result"></span>
   </div>
 
   <div class="panels-row">
@@ -922,16 +939,13 @@
     }
 
     function leaderboardItemHtml(entry, rank) {
+      const putHeavy = entry.put > entry.call;
       return `<div class="leaderboard-item" data-symbol="${entry.symbol}">` +
-        `<div class="leaderboard-item-top">` +
         `<span class="leaderboard-rank">${rank}</span>` +
-        `<span class="leaderboard-symbol">${entry.symbol}</span>` +
-        `<span class="leaderboard-total">${formatPremiumTotal(entry.total)}</span>` +
-        `</div>` +
-        `<div class="leaderboard-split">` +
-        `<span class="leaderboard-call">Calls ${formatPremiumTotal(entry.call)}</span>` +
-        `<span class="leaderboard-put">Puts ${formatPremiumTotal(entry.put)}</span>` +
-        `</div></div>`;
+        `<span class="leaderboard-symbol ${putHeavy ? 'put-heavy' : 'call-heavy'}">${entry.symbol}</span>` +
+        `<span class="leaderboard-call">${formatPremiumTotal(entry.call)}</span>` +
+        `<span class="leaderboard-put">${formatPremiumTotal(entry.put)}</span>` +
+        `</div>`;
     }
 
     async function loadLeaderboard() {
@@ -972,6 +986,53 @@
       panels[0].els.tickerInput.value = symbol;
       panels[0].loadInitialSeedData(symbol);
       document.getElementById('leaderboard-panel').classList.add('hidden');
+    });
+
+    // -------------------------------------------------------------
+    // CHECK PREMIUM: on-demand call/put premium lookup for ANY ticker,
+    // not just the curated leaderboard list. First check on a new symbol
+    // starts tracking it from $0; premium accumulates from that point
+    // forward - checking again later (or via the auto-refresh below)
+    // shows it growing, but there's no historical backfill for premium
+    // that traded before the first check.
+    // -------------------------------------------------------------
+    let premiumCheckInterval = null;
+    let premiumCheckSymbol = null;
+
+    async function checkPremium(symbol) {
+      const resultEl = document.getElementById('premium-check-result');
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/api/premium?symbol=${encodeURIComponent(symbol)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+        const putHeavy = data.put > data.call;
+        resultEl.innerHTML = `<span style="color:${putHeavy ? '#ff5252' : '#00c853'}; font-weight:600;">${data.symbol}</span> ` +
+          `Calls <span style="color:#00c853;">${formatPremiumTotal(data.call)}</span> ` +
+          `Puts <span style="color:#ff5252;">${formatPremiumTotal(data.put)}</span>` +
+          (data.newlyTracked ? ' <span style="color:#8fa0be;">(just started tracking)</span>' : '');
+      } catch (err) {
+        console.error('[premium check] failed:', err);
+        resultEl.innerText = 'Failed to check';
+      }
+    }
+
+    function startPremiumCheck(symbol) {
+      if (premiumCheckInterval) clearInterval(premiumCheckInterval);
+      premiumCheckSymbol = symbol;
+      document.getElementById('premium-check-result').innerText = 'Checking...';
+      checkPremium(symbol);
+      // Keep it "live" while this symbol stays checked - refresh every 20s.
+      premiumCheckInterval = setInterval(() => checkPremium(symbol), 20_000);
+    }
+
+    document.getElementById('premium-check-btn').addEventListener('click', () => {
+      const symbol = document.getElementById('premium-check-input').value.trim().toUpperCase();
+      if (symbol) startPremiumCheck(symbol);
+    });
+
+    document.getElementById('premium-check-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('premium-check-btn').click();
     });
   </script>
 </body>
