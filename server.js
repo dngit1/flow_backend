@@ -44,6 +44,13 @@ const browserClients = new Map();
 
 function sendToClient(clientId, message) {
   const ws = browserClients.get(clientId);
+  // TEMP DIAGNOSTIC: shows exactly what happens at the final delivery
+  // point for flow messages - whether the client is even found in
+  // browserClients, and what readyState its socket is in. Remove once the
+  // cross-client flow-delivery investigation is resolved.
+  if (message.type === 'flow') {
+    console.log(`[server] DELIVER flow to ${clientId.slice(0, 8)}: found=${!!ws} readyState=${ws ? ws.readyState : 'N/A'}`);
+  }
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
