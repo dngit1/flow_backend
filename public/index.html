@@ -963,6 +963,13 @@
         if (e.key === 'Enter') els.searchBtn.click();
       });
       els.expirationSelect.addEventListener('change', (e) => {
+        // Clear stale entries from the PREVIOUS expiration before watching
+        // the new one - without this, old and new expirations' sweeps mix
+        // together in the sidebar/chart instead of the new one replacing
+        // the old, since only ticker switches used to clear these.
+        els.flowList.innerHTML = '';
+        panel.flowMarkers = [];
+        candlestickSeries.setMarkers([]);
         panel.watchFlow(e.target.value);
       });
 
