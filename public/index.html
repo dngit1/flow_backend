@@ -538,6 +538,37 @@
     }
 
     // -------------------------------------------------------------
+    // MOVING AVERAGE / VWAP CALCULATIONS
+    // -------------------------------------------------------------
+    function computeMA(bars, period) {
+      const points = [];
+      for (let i = period - 1; i < bars.length; i++) {
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += bars[j].close;
+        points.push({ time: bars[i].time, value: sum / period });
+      }
+      return points;
+    }
+
+    // Bar-level VWAP approximation (typical price * volume, cumulative from
+    // the start of whatever history was fetched) - NOT a precise session
+    // VWAP anchored to market open, since that would need us to know exact
+    // session boundaries. Good enough for a visual reference line.
+    function computeVWAP(bars) {
+      const points = [];
+      let cumPV = 0;
+      let cumVol = 0;
+      for (const b of bars) {
+        const typical = (b.high + b.low + b.close) / 3;
+        const vol = b.volume || 0;
+        cumPV += typical * vol;
+        cumVol += vol;
+        points.push({ time: b.time, value: cumVol > 0 ? cumPV / cumVol : typical });
+      }
+      return points;
+    }
+
+    // -------------------------------------------------------------
     // PANEL FACTORY - each panel owns its own WebSocket connection to
     // the backend. The backend merges every connected panel's (and every
     // other visitor's) symbols into ONE shared Alpaca connection and ONE
@@ -574,6 +605,17 @@
         wickDownColor: '#ff5252',
       });
 
+      // MA200 needs 200 bars for its first value - only a portion of the
+      // fetched history will show a line, which is expected, not a bug.
+      const ma9Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA9' });
+      const ma20Series = chart.addLineSeries({ color: '#4caf50', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
+      const ma50Series = chart.addLineSeries({ color: '#f5a623', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      const ma200Series = chart.addLineSeries({ color: '#7c4dff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      // VWAP is a historical snapshot computed at load time, NOT live-updating
+      // tick-by-tick (that needs live volume data we don't track yet) - it
+      // won't extend as new candles form until the next reload/switch.
+      const vwapSeries = chart.addLineSeries({ color: '#29b6f6', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
       const panel = {
         index,
         symbol: defaultSymbol,
@@ -582,6 +624,12 @@
         pendingWatchExpiration: null, // tracks an unconfirmed watch_flow request for retry
         chart,
         candlestickSeries,
+        ma9Series,
+        ma20Series,
+        ma50Series,
+        ma200Series,
+        vwapSeries,
+        closeHistory: [], // [{time, close}] - full history, seeded + live-appended, feeds MA calc
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -669,10 +717,15 @@
 
       panel.centerLastCandle = function () {
         const width = els.chartContainer.clientWidth || 600;
-        const barSpacing = chart.timeScale().options().barSpacing || 8;
-        const halfBars = Math.max(1, Math.floor(width / barSpacing / 2));
-        chart.timeScale().applyOptions({ rightOffset: halfBars });
-        chart.timeScale().scrollToPosition(halfBars, false);
+        const targetVisibleBars = 100;
+        // Fit ~200 real candles to the container width, instead of using a
+        // fixed 8px barSpacing (which showed far fewer bars on a normal
+        // screen). Floor at 2px so it never gets illegibly thin on very
+        // narrow (e.g. phone) screens.
+        const newBarSpacing = Math.max(2, width / targetVisibleBars);
+        const rightOffset = 10; // small breathing room, not full-screen centering
+        chart.timeScale().applyOptions({ barSpacing: newBarSpacing, rightOffset });
+        chart.timeScale().scrollToPosition(rightOffset, false);
         chart.priceScale('right').applyOptions({ autoScale: true });
       };
 
@@ -746,6 +799,7 @@
           candlestickSeries.update({
             time: currentMinuteBucket, open: tradePrice, high: tradePrice, low: tradePrice, close: tradePrice,
           });
+          panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
         } else {
           candlestickSeries.update({
             time: panel.lastBarTime,
@@ -754,7 +808,26 @@
             low: Math.min(panel.lastBarPrice, tradePrice),
             close: tradePrice,
           });
+          if (panel.closeHistory.length > 0) {
+            panel.closeHistory[panel.closeHistory.length - 1].close = tradePrice;
+          }
         }
+
+        // Live MA9/MA20/MA50/MA200 - recompute from the tail of closeHistory
+        // and update just the current bar's point. VWAP is NOT updated here
+        // on purpose (see its creation comment above) - it stays a snapshot
+        // from the last full load/switch.
+        const hist = panel.closeHistory;
+        function updateMA(series, period) {
+          if (hist.length < period) return;
+          let sum = 0;
+          for (let i = hist.length - period; i < hist.length; i++) sum += hist[i].close;
+          series.update({ time: panel.lastBarTime, value: sum / period });
+        }
+        updateMA(ma9Series, 9);
+        updateMA(ma20Series, 20);
+        updateMA(ma50Series, 50);
+        updateMA(ma200Series, 200);
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
@@ -834,12 +907,24 @@
           // fixes. A failed load should show nothing, not something stale
           // pretending to belong to the symbol that just failed.
           candlestickSeries.setData([]);
+          ma9Series.setData([]);
+          ma20Series.setData([]);
+          ma50Series.setData([]);
+          ma200Series.setData([]);
+          vwapSeries.setData([]);
+          panel.closeHistory = [];
           panel.symbol = previousSymbol;
           return;
         }
 
         try {
           candlestickSeries.setData(seedCandles);
+          panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
+          ma9Series.setData(computeMA(seedCandles, 9));
+          ma20Series.setData(computeMA(seedCandles, 20));
+          ma50Series.setData(computeMA(seedCandles, 50));
+          ma200Series.setData(computeMA(seedCandles, 200));
+          vwapSeries.setData(computeVWAP(seedCandles));
           panel.centerLastCandle();
           console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
         } catch (renderErr) {
