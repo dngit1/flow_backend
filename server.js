@@ -178,7 +178,13 @@ wss.on('connection', (ws) => {
     // ---- option flow subscription (Tradier) ----
     if (msg.type === 'watch_flow' && msg.symbol && msg.expiration) {
       try {
-        const spotPrice = alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || msg.spotPrice || 0;
+        // Prefer the price the client just fetched (guaranteed fresh, sent
+        // right after a successful historical-bars load) over our own
+        // cached lastPriceOf() - that cache can be stale or empty at this
+        // exact moment (a timing race after reconnects/resubscribes),
+        // which previously caused near-the-money strikes to silently fall
+        // back to an arbitrary, unrelated strike.
+        const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
         const count = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
         sendToClient(clientId, { type: 'flow_watching', symbol: msg.symbol, expiration: msg.expiration, contractCount: count });
       } catch (err) {
