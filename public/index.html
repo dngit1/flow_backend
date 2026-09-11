@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Live Option Flow</title>
+  <title>Live Stock Charts + Option Flow Sweeps</title>
   <style>
     html, body {
       margin: 0;
@@ -688,12 +688,16 @@
 
       panel.centerLastCandle = function () {
         const width = els.chartContainer.clientWidth || 600;
-        const targetVisibleBars = 200;
-        // Fit ~200 real candles to the container width, instead of using a
-        // fixed 8px barSpacing (which showed far fewer bars on a normal
-        // screen). Floor at 2px so it never gets illegibly thin on very
-        // narrow (e.g. phone) screens.
-        const newBarSpacing = Math.max(2, width / targetVisibleBars);
+        // Fit to however many REAL bars we actually have, capped at 200 -
+        // not a fixed 200 regardless of data. If the fetch only returned,
+        // say, 90 bars (thin trading, after-hours, etc.), targeting a fixed
+        // 200 left the rest of the width empty. This way the real candles
+        // always stretch to fill the available space.
+        const actualBars = Math.max(1, panel.closeHistory.length);
+        const targetVisibleBars = Math.min(200, actualBars);
+        // Floor at 2px so it never gets illegibly thin; cap at 20px so a
+        // handful of bars don't render as absurdly chunky blocks.
+        const newBarSpacing = Math.max(2, Math.min(20, width / targetVisibleBars));
         const rightOffset = 10; // small breathing room, not full-screen centering
         chart.timeScale().applyOptions({ barSpacing: newBarSpacing, rightOffset });
         chart.timeScale().scrollToPosition(rightOffset, false);
