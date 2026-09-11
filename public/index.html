@@ -284,6 +284,12 @@
       font-weight: 600;
     }
 
+    .ws-debug {
+      font-size: 10px;
+      color: #8fa0be;
+      font-family: monospace;
+    }
+
     .status-badge {
       font-size: 11px;
       padding: 3px 7px;
@@ -439,6 +445,7 @@
           <span class="ticker-price">--</span>
           <span class="ticker-change"></span>
           <span class="status-badge">Disconnected</span>
+          <span class="ws-debug"></span>
         </div>
         <div class="chart-container"></div>
         <div class="chart-error-banner"></div>
@@ -467,6 +474,7 @@
           <span class="ticker-price">--</span>
           <span class="ticker-change"></span>
           <span class="status-badge">Disconnected</span>
+          <span class="ws-debug"></span>
         </div>
         <div class="chart-container"></div>
         <div class="chart-error-banner"></div>
@@ -573,6 +581,7 @@
         tickerSymbol: root.querySelector('.ticker-symbol'),
         tickerPrice: root.querySelector('.ticker-price'),
         tickerChange: root.querySelector('.ticker-change'),
+        wsDebug: root.querySelector('.ws-debug'),
         statusBadge: root.querySelector('.status-badge'),
         chartContainer: root.querySelector('.chart-container'),
         chartErrorBanner: root.querySelector('.chart-error-banner'),
@@ -643,6 +652,16 @@
         panel.ws.onmessage = (event) => {
           let msg;
           try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+          // TEMP DEBUG: visible on-page WS activity indicator - lets us
+          // verify message delivery on ANY device (especially mobile,
+          // where remote DevTools access is a real hassle) without needing
+          // console access. Remove once the cross-device flow-delivery
+          // investigation is resolved.
+          panel.wsMsgCount = (panel.wsMsgCount || 0) + 1;
+          if (msg.type === 'flow') panel.wsFlowCount = (panel.wsFlowCount || 0) + 1;
+          const nowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
             panel.handlePriceTick(msg.price, msg.timeMs);
