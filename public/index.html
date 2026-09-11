@@ -382,6 +382,39 @@
     .flow-strike { font-weight: bold; color: #ffffff; }
     .flow-premium { color: #00c853; font-weight: 600; }
     .flow-card.put .flow-premium { color: #ff5252; }
+
+    .bigflow-toggle-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .bigflow-toggle-btn:hover {
+      background-color: #364153;
+    }
+
+    .bigflow-toggle-btn.active {
+      background-color: #7a5f00;
+      border-color: #a68100;
+    }
+
+    /* Big-flow entries (any expiration, not just the selected one) get a
+       distinct gold border and an expiration-date line, so they're never
+       confused with the normal single-expiration sidebar entries. */
+    .flow-card.bigflow {
+      border-left-color: #ffc107;
+    }
+
+    .flow-bigflow-tag {
+      color: #ffc107;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+    }
   </style>
 
   <!-- Lightweight Charts v4 Standalone -->
@@ -437,6 +470,7 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
+      <button class="bigflow-toggle-btn">Big Flow: Off</button>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -466,6 +500,7 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
+      <button class="bigflow-toggle-btn">Big Flow: Off</button>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -496,7 +531,8 @@
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
-    const MARKER_SIZE = 2;
+    const MARKER_SIZE = 4; // larger = further from the candle body
+    const BIG_FLOW_THRESHOLD = 100000; // only genuinely large prints show in the "any expiration" alert feature - with 6 expirations x ~40 contracts, showing everything above MIN_FLOW_PREMIUM would be overwhelming
 
     async function fetchHistoricalBars(symbol) {
       let response;
@@ -558,6 +594,7 @@
         chartContainer: root.querySelector('.chart-container'),
         chartErrorBanner: root.querySelector('.chart-error-banner'),
         flowList: root.querySelector('.flow-list'),
+        bigflowToggleBtn: root.querySelector('.bigflow-toggle-btn'),
       };
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
@@ -600,6 +637,7 @@
         ma20Series,
         closeHistory: [],
         previousClose: null,
+        bigFlowEnabled: false,
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -639,12 +677,17 @@
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
             panel.handlePriceTick(msg.price, msg.timeMs);
+          } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
+            if (msg.premium < BIG_FLOW_THRESHOLD) return;
+            panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side, formatExpirationLabel(msg.expiration));
           } else if (msg.type === 'flow') {
             if (msg.premium < MIN_FLOW_PREMIUM) return;
             panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side);
           } else if (msg.type === 'flow_watching') {
             console.log(`[flow:${panel.symbol}] watching ${msg.contractCount} contracts, expiration ${msg.expiration}`);
             if (msg.expiration === panel.pendingWatchExpiration) panel.pendingWatchExpiration = null;
+          } else if (msg.type === 'big_flow_watching') {
+            console.log(`[bigflow:${panel.symbol}] watching ${msg.contractCount} contracts across multiple expirations`);
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
@@ -723,12 +766,13 @@
         panel.centerLastCandle();
       };
 
-      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr) {
+      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel) {
         const isCall = type === 'CALL';
         const card = document.createElement('div');
-        card.className = `flow-card ${isCall ? 'call' : 'put'}`;
+        card.className = `flow-card ${isCall ? 'call' : 'put'}${expirationLabel ? ' bigflow' : ''}`;
         card.innerHTML = `
           <div class="flow-details">
+            ${expirationLabel ? `<span class="flow-bigflow-tag">ALL EXP &middot; ${expirationLabel}</span>` : ''}
             <span class="flow-strike">${panel.symbol} ${strike} ${type}</span>
             <span style="color: #8fa0be; font-size: 11px;">${sideLabel || 'BOUGHT'}${timeStr ? ' &middot; ' + timeStr : ''}</span>
           </div>
@@ -738,7 +782,7 @@
         if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
       };
 
-      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side) {
+      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel) {
         if (!panel.lastBarTime) return;
 
         const isCall = type === 'CALL';
@@ -746,7 +790,7 @@
         const sideLabel = side || 'BOUGHT';
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
 
-        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr);
+        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel);
 
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
@@ -755,7 +799,7 @@
           position: isCall ? 'belowBar' : 'aboveBar',
           color: isCall ? '#00c853' : '#ff5252',
           shape: isCall ? 'arrowUp' : 'arrowDown',
-          text: `${sideLabel} ${type} $${strike} (${formattedPrem})`,
+          text: `${expirationLabel ? `[${expirationLabel}] ` : ''}${sideLabel} ${type} $${strike} (${formattedPrem})`,
           size: MARKER_SIZE,
           isCall,
           side: sideLabel,
@@ -900,6 +944,13 @@
 
         panel.sendWS({ type: 'subscribe_price', symbol });
 
+        // If big-flow (all expirations) was on for the previous ticker,
+        // re-point it at the new one - the server just overwrites the
+        // same tracked-contracts entry, no separate unwatch needed.
+        if (panel.bigFlowEnabled) {
+          panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
+        }
+
         if (isFuturesTicker(symbol)) {
           panel.setStatus('(delayed)', '#2b3548');
           els.expirationSelect.disabled = true;
@@ -921,6 +972,18 @@
         panel.flowMarkers = [];
         candlestickSeries.setMarkers([]);
         panel.watchFlow(e.target.value);
+      });
+
+      els.bigflowToggleBtn.addEventListener('click', () => {
+        panel.bigFlowEnabled = !panel.bigFlowEnabled;
+        els.bigflowToggleBtn.innerText = `Big Flow: ${panel.bigFlowEnabled ? 'On' : 'Off'}`;
+        els.bigflowToggleBtn.classList.toggle('active', panel.bigFlowEnabled);
+
+        if (panel.bigFlowEnabled) {
+          panel.sendWS({ type: 'watch_big_flow', symbol: panel.symbol, spotPrice: panel.lastBarPrice });
+        } else {
+          panel.sendWS({ type: 'unwatch_big_flow' });
+        }
       });
 
       window.addEventListener('resize', () => panel.centerLastCandle());
