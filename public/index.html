@@ -605,12 +605,8 @@
         wickDownColor: '#ff5252',
       });
 
-      // MA200 needs 200 bars for its first value - only a portion of the
-      // fetched history will show a line, which is expected, not a bug.
-      const ma9Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA9' });
-      const ma20Series = chart.addLineSeries({ color: '#4caf50', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
-      const ma50Series = chart.addLineSeries({ color: '#f5a623', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-      const ma200Series = chart.addLineSeries({ color: '#7c4dff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+      const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA9' });
+      const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
       // VWAP is a historical snapshot computed at load time, NOT live-updating
       // tick-by-tick (that needs live volume data we don't track yet) - it
       // won't extend as new candles form until the next reload/switch.
@@ -626,8 +622,6 @@
         candlestickSeries,
         ma9Series,
         ma20Series,
-        ma50Series,
-        ma200Series,
         vwapSeries,
         closeHistory: [], // [{time, close}] - full history, seeded + live-appended, feeds MA calc
         flowMarkers: [],
@@ -813,7 +807,7 @@
           }
         }
 
-        // Live MA9/MA20/MA50/MA200 - recompute from the tail of closeHistory
+        // Live MA9/MA20 - recompute from the tail of closeHistory
         // and update just the current bar's point. VWAP is NOT updated here
         // on purpose (see its creation comment above) - it stays a snapshot
         // from the last full load/switch.
@@ -826,8 +820,6 @@
         }
         updateMA(ma9Series, 9);
         updateMA(ma20Series, 20);
-        updateMA(ma50Series, 50);
-        updateMA(ma200Series, 200);
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
@@ -909,8 +901,6 @@
           candlestickSeries.setData([]);
           ma9Series.setData([]);
           ma20Series.setData([]);
-          ma50Series.setData([]);
-          ma200Series.setData([]);
           vwapSeries.setData([]);
           panel.closeHistory = [];
           panel.symbol = previousSymbol;
@@ -922,8 +912,6 @@
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
           ma9Series.setData(computeMA(seedCandles, 9));
           ma20Series.setData(computeMA(seedCandles, 20));
-          ma50Series.setData(computeMA(seedCandles, 50));
-          ma200Series.setData(computeMA(seedCandles, 200));
           vwapSeries.setData(computeVWAP(seedCandles));
           panel.centerLastCandle();
           console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
