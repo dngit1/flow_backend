@@ -67,12 +67,38 @@ function broadcastPrice(symbol, payload) {
   }
 }
 
+function broadcastStockFlow(symbol, payload) {
+  for (const [clientId, ws] of browserClients) {
+    if (ws.readyState === WebSocket.OPEN && ws.watchedSymbol === symbol) {
+      ws.send(JSON.stringify({ type: 'stock_flow', symbol, ...payload }));
+    }
+  }
+}
+
+// Filtered server-side (not client-adjustable like the option flow
+// thresholds) - without this, every single trade on a liquid stock would
+// get broadcast to every watching client, which is far too much traffic.
+const STOCK_BLOCK_TRADE_THRESHOLD = 500_000; // dollar value
+
 let currentAlpacaStatus = { status: 'disconnected', detail: null };
 
 const alpacaHub = createAlpacaHub({
   apiKey: ALPACA_KEY,
   apiSecret: ALPACA_SECRET,
-  onTrade: ({ symbol, price, timeMs }) => broadcastPrice(symbol, { price, timeMs }),
+  onTrade: ({ symbol, price, size, prevPrice, timeMs }) => {
+    broadcastPrice(symbol, { price, timeMs });
+
+    const dollarValue = price * (size || 0);
+    if (dollarValue >= STOCK_BLOCK_TRADE_THRESHOLD) {
+      // Simple uptick/downtick classification - less precise than the
+      // bid/ask comparison option flow uses, but doesn't need a second
+      // (quotes) subscription. A trade at the same price as the last one
+      // is called BUY by default rather than adding a third "NEUTRAL"
+      // side the frontend would need to handle separately.
+      const side = (prevPrice != null && price < prevPrice) ? 'SELL' : 'BUY';
+      broadcastStockFlow(symbol, { price, size, dollarValue, side, timeMs });
+    }
+  },
   onStatus: (status, detail) => {
     currentAlpacaStatus = { status, detail };
     for (const ws of browserClients.values()) {
