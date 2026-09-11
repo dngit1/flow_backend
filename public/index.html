@@ -679,6 +679,13 @@
             panel.handlePriceTick(msg.price, msg.timeMs);
           } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
             if (msg.premium < BIG_FLOW_THRESHOLD) return;
+            // Big Flow watches several expirations, one of which is often
+            // the SAME one currently selected in the dropdown - without
+            // this check, a trade on that shared expiration shows up
+            // twice: once via the normal single-expiration flow, once
+            // via this bigflow path. Skip it here since the normal path
+            // already displays it.
+            if (msg.expiration === els.expirationSelect.value) return;
             panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side, formatExpirationLabel(msg.expiration));
           } else if (msg.type === 'flow') {
             if (msg.premium < MIN_FLOW_PREMIUM) return;
