@@ -531,8 +531,8 @@
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
-    const MARKER_SIZE = 4; // larger = further from the candle body
-    const BIG_FLOW_THRESHOLD = 100000; // only genuinely large prints show in the "any expiration" alert feature - with 6 expirations x ~40 contracts, showing everything above MIN_FLOW_PREMIUM would be overwhelming
+    const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
+    const BIG_FLOW_THRESHOLD = 250000; // only genuinely large prints show in the "any expiration" alert feature - with 6 expirations x ~40 contracts, showing everything above MIN_FLOW_PREMIUM would be overwhelming
 
     async function fetchHistoricalBars(symbol) {
       let response;
