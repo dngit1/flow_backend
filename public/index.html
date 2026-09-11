@@ -279,6 +279,11 @@
       color: #00c853;
     }
 
+    .ticker-change {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
     .status-badge {
       font-size: 11px;
       padding: 3px 7px;
@@ -432,6 +437,7 @@
         <div class="ticker-overlay">
           <span class="ticker-symbol">SPY</span>
           <span class="ticker-price">--</span>
+          <span class="ticker-change"></span>
           <span class="status-badge">Disconnected</span>
         </div>
         <div class="chart-container"></div>
@@ -459,6 +465,7 @@
         <div class="ticker-overlay">
           <span class="ticker-symbol">QQQ</span>
           <span class="ticker-price">--</span>
+          <span class="ticker-change"></span>
           <span class="status-badge">Disconnected</span>
         </div>
         <div class="chart-container"></div>
@@ -508,7 +515,7 @@
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
       if (!data.bars || data.bars.length === 0) throw new Error('No bars returned for this symbol');
-      return data.bars;
+      return { bars: data.bars, previousClose: data.previousClose || null };
     }
 
     async function fetchAllExpirations(symbol) {
@@ -565,6 +572,7 @@
         expirationSelect: root.querySelector('.expiration-select'),
         tickerSymbol: root.querySelector('.ticker-symbol'),
         tickerPrice: root.querySelector('.ticker-price'),
+        tickerChange: root.querySelector('.ticker-change'),
         statusBadge: root.querySelector('.status-badge'),
         chartContainer: root.querySelector('.chart-container'),
         chartErrorBanner: root.querySelector('.chart-error-banner'),
@@ -587,7 +595,7 @@
         wickDownColor: '#ff5252',
       });
 
-      const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA9', lineType: 1 });
+      const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA8', lineType: 1 });
       const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
 
       const panel = {
@@ -601,6 +609,7 @@
         ma9Series,
         ma20Series,
         closeHistory: [], // [{time, close}] - full history, seeded + live-appended, feeds MA calc
+        previousClose: null, // for computing % change; null for futures (not supported yet)
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -684,6 +693,17 @@
         els.chartErrorBanner.innerText = message;
         els.chartErrorBanner.style.display = 'block';
         console.error(`[chart:${panel.symbol}]`, message);
+      };
+
+      panel.updatePercentChange = function (price) {
+        if (!panel.previousClose) {
+          els.tickerChange.innerText = '';
+          return;
+        }
+        const pct = ((price - panel.previousClose) / panel.previousClose) * 100;
+        const sign = pct >= 0 ? '+' : '';
+        els.tickerChange.innerText = `${sign}${pct.toFixed(2)}%`;
+        els.tickerChange.style.color = pct >= 0 ? '#00c853' : '#ff5252';
       };
 
       panel.centerLastCandle = function () {
@@ -788,7 +808,7 @@
           }
         }
 
-        // Live MA9/MA20 - recompute from the tail of closeHistory
+        // Live MA8/MA20 - recompute from the tail of closeHistory
         // and update just the current bar's point.
         const hist = panel.closeHistory;
         function updateMA(series, period) {
@@ -797,11 +817,12 @@
           for (let i = hist.length - period; i < hist.length; i++) sum += hist[i].close;
           series.update({ time: panel.lastBarTime, value: sum / period });
         }
-        updateMA(ma9Series, 9);
+        updateMA(ma9Series, 8);
         updateMA(ma20Series, 20);
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
+        panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
       };
 
@@ -865,13 +886,16 @@
 
         let seedCandles;
         try {
-          seedCandles = await fetchHistoricalBars(symbol);
+          const result = await fetchHistoricalBars(symbol);
+          seedCandles = result.bars;
+          panel.previousClose = result.previousClose;
           console.log(`[chart:${symbol}] Loaded ${seedCandles.length} real bars`, seedCandles[seedCandles.length - 1]);
         } catch (err) {
           console.error(`[chart:${symbol}] Historical bars failed to load:`, err);
           panel.setStatus('Failed to load data', '#7a1f1f');
           panel.showChartError(`Couldn't load price history: ${err.message}`);
           els.tickerPrice.innerText = '--';
+          els.tickerChange.innerText = '';
           // Clear the chart too - leaving the OLD symbol's candles visible
           // under the NEW (failed) symbol's label/ticker-overlay would be
           // just as misleading as the stale-flow bug this whole change
@@ -888,7 +912,7 @@
         try {
           candlestickSeries.setData(seedCandles);
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
-          ma9Series.setData(computeMA(seedCandles, 9));
+          ma9Series.setData(computeMA(seedCandles, 8));
           ma20Series.setData(computeMA(seedCandles, 20));
           panel.centerLastCandle();
           console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
@@ -905,6 +929,7 @@
 
         els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
         els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
+        panel.updatePercentChange(panel.lastBarPrice);
         panel.hasLoadedOnce = true;
 
         // one WS message each - the backend handles merging this with
