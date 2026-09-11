@@ -85,17 +85,26 @@ let currentAlpacaStatus = { status: 'disconnected', detail: null };
 const alpacaHub = createAlpacaHub({
   apiKey: ALPACA_KEY,
   apiSecret: ALPACA_SECRET,
-  onTrade: ({ symbol, price, size, prevPrice, timeMs }) => {
+  onTrade: ({ symbol, price, size, prevPrice, bid, ask, timeMs }) => {
     broadcastPrice(symbol, { price, timeMs });
 
     const dollarValue = price * (size || 0);
     if (dollarValue >= STOCK_BLOCK_TRADE_THRESHOLD) {
-      // Simple uptick/downtick classification - less precise than the
-      // bid/ask comparison option flow uses, but doesn't need a second
-      // (quotes) subscription. A trade at the same price as the last one
-      // is called BUY by default rather than adding a third "NEUTRAL"
-      // side the frontend would need to handle separately.
-      const side = (prevPrice != null && price < prevPrice) ? 'SELL' : 'BUY';
+      let side;
+      if (bid > 0 && ask > 0) {
+        // Real bid/ask comparison - same approach option flow already
+        // uses. A trade between the bid and ask (inside the spread) is
+        // genuinely ambiguous, so fall back to uptick/downtick just for
+        // that case rather than a third "NEUTRAL" side the frontend
+        // would need to handle separately.
+        if (price >= ask) side = 'BUY';
+        else if (price <= bid) side = 'SELL';
+        else side = (prevPrice != null && price < prevPrice) ? 'SELL' : 'BUY';
+      } else {
+        // No quote seen yet for this symbol (e.g. right after subscribing) -
+        // fall back to simple uptick/downtick.
+        side = (prevPrice != null && price < prevPrice) ? 'SELL' : 'BUY';
+      }
       broadcastStockFlow(symbol, { price, size, dollarValue, side, timeMs });
     }
   },
