@@ -684,7 +684,7 @@
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
-          } else if (msg.type === '_status') {
+          } else if (msg.type === 'alpaca_status') {
             // Alpaca's connection status is global but irrelevant to futures
             // panels (they use polling, not Alpaca) - don't let it stomp on
             // the "Polling (free tier)" label those panels set themselves.
