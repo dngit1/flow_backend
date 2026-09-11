@@ -204,6 +204,24 @@ wss.on('connection', (ws) => {
       tradierHub.unwatch(clientId);
       return;
     }
+
+    // "Big flow, any expiration" - watches several near-term expirations
+    // at once instead of just the one selected in the normal dropdown.
+    if (msg.type === 'watch_big_flow' && msg.symbol) {
+      try {
+        const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
+        const count = await tradierHub.watchBigFlow(clientId, msg.symbol.toUpperCase(), spotPrice);
+        sendToClient(clientId, { type: 'big_flow_watching', symbol: msg.symbol, contractCount: count });
+      } catch (err) {
+        sendToClient(clientId, { type: 'flow_error', error: err.message });
+      }
+      return;
+    }
+
+    if (msg.type === 'unwatch_big_flow') {
+      tradierHub.unwatchBigFlow(clientId);
+      return;
+    }
   });
 
   ws.on('close', () => {
@@ -212,6 +230,7 @@ wss.on('connection', (ws) => {
       else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
     }
     tradierHub.unwatch(clientId);
+    tradierHub.unwatchBigFlow(clientId);
     browserClients.delete(clientId);
   });
 });
