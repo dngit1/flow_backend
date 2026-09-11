@@ -829,7 +829,13 @@
       panel.watchFlow = function (expiration) {
         if (!expiration) return;
         panel.pendingWatchExpiration = expiration;
-        panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration });
+        // Send our own just-fetched price along, instead of making the
+        // server rely solely on its cached last-known price for this
+        // symbol - that cache can be stale/empty at the exact moment this
+        // fires (a timing race), which silently produces wildly wrong
+        // "near the money" strikes since the server falls back to
+        // whatever strike happens to be first in Tradier's response.
+        panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
 
         // Safety net: if no flow_watching confirmation arrives within 5s
         // (message lost, connection hiccup, etc.), retry once automatically
@@ -837,7 +843,7 @@
         setTimeout(() => {
           if (panel.pendingWatchExpiration === expiration && panel.active && panel.symbol) {
             console.warn(`[flow:${panel.symbol}] No confirmation received for ${expiration} - retrying`);
-            panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration });
+            panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
           }
         }, 5000);
       };
