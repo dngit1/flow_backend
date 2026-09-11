@@ -489,30 +489,15 @@
   </div>
 
   <script>
-    // -------------------------------------------------------------
-    // No API keys here anymore - everything routes through your own
-    // backend, which holds the real Alpaca/Twelve Data/Tradier
-    // credentials and manages the shared upstream connections.
-    // Change these if your backend runs somewhere other than localhost.
-    // -------------------------------------------------------------
-    // Since this file is now served BY the backend itself (same origin),
-    // derive the URLs automatically instead of hardcoding a domain - this
-    // keeps working correctly whether it's accessed via xnlflow.com, a
-    // Render .onrender.com URL, or localhost during testing.
     const BACKEND_HTTP = window.location.origin;
     const BACKEND_WS = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
-    const MIN_FLOW_PREMIUM = 25000; // client-side filter on incoming flow events
-    let CHART_MARKER_PREMIUM_FLOOR = 50000; // adjustable live via the "Min chart marker" dropdown
-    const CHART_MARKER_MAX = 30; // caps only LARGE prints that clear the marker floor
-    const SIDEBAR_FLOW_MAX = 60; // caps EVERY event, so it fills faster than the chart -
-    // kept well above CHART_MARKER_MAX so a large print isn't likely to scroll out of
-    // the sidebar (pushed out by many smaller events) while still showing on the chart
-    const MARKER_SIZE = 2; // Lightweight Charts marker size - larger = further from the candle body
+    const MIN_FLOW_PREMIUM = 25000;
+    let CHART_MARKER_PREMIUM_FLOOR = 50000;
+    const CHART_MARKER_MAX = 30;
+    const SIDEBAR_FLOW_MAX = 60;
+    const MARKER_SIZE = 2;
 
-    // -------------------------------------------------------------
-    // SHARED HELPERS
-    // -------------------------------------------------------------
     async function fetchHistoricalBars(symbol) {
       let response;
       try {
@@ -545,16 +530,10 @@
       });
     }
 
-    // Matches the backend's futuresHub.js pattern - e.g. ESZ5, NQZ5.
-    // Used purely for UI decisions (skip options/flow UI, different status
-    // label); the backend does its own authoritative routing regardless.
     function isFuturesTicker(symbol) {
       return /^[A-Z]{1,3}[FGHJKMNQUVXZ]\d$/.test(symbol);
     }
 
-    // -------------------------------------------------------------
-    // MOVING AVERAGE CALCULATIONS
-    // -------------------------------------------------------------
     function computeMA(bars, period) {
       const points = [];
       for (let i = period - 1; i < bars.length; i++) {
@@ -565,13 +544,6 @@
       return points;
     }
 
-    // -------------------------------------------------------------
-    // PANEL FACTORY - each panel owns its own WebSocket connection to
-    // the backend. The backend merges every connected panel's (and every
-    // other visitor's) symbols into ONE shared Alpaca connection and ONE
-    // shared Tradier session - panels here don't need to know or care
-    // about that; they just subscribe/unsubscribe for themselves.
-    // -------------------------------------------------------------
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
       const els = {
@@ -593,7 +565,7 @@
         layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
         timeScale: { timeVisible: true, secondsVisible: false, barSpacing: 8 },
-        rightPriceScale: { scaleMargins: { top: 0.3, bottom: 0.15 } },
+        rightPriceScale: { scaleMargins: { top: 0.3, bottom: 0.28 } },
       });
 
       const candlestickSeries = chart.addCandlestickSeries({
@@ -604,6 +576,14 @@
         wickDownColor: '#ff5252',
       });
 
+      const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+
       const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA8', lineType: 1 });
       const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
 
@@ -611,14 +591,15 @@
         index,
         symbol: defaultSymbol,
         active: true,
-        hasLoadedOnce: false, // becomes true after the first successful chart load
-        pendingWatchExpiration: null, // tracks an unconfirmed watch_flow request for retry
+        hasLoadedOnce: false,
+        pendingWatchExpiration: null,
         chart,
         candlestickSeries,
+        volumeSeries,
         ma9Series,
         ma20Series,
-        closeHistory: [], // [{time, close}] - full history, seeded + live-appended, feeds MA calc
-        previousClose: null, // for computing % change; null for futures (not supported yet)
+        closeHistory: [],
+        previousClose: null,
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -628,13 +609,7 @@
         wsQueue: [],
       };
 
-      // ---- backend WebSocket (one per panel) ----
       function connectWS() {
-        // TEMP DIAGNOSTIC: reveals whether this panel's WebSocket is being
-        // (re)created more than once, even right after a fresh page load -
-        // that would explain a duplicated subscribe_price/watch_flow send
-        // via the reconnect-resend logic below. Remove once the
-        // cross-client flow/price-freezing investigation is resolved.
         panel.wsConnectCount = (panel.wsConnectCount || 0) + 1;
         console.log(`[ws:${panel.symbol}] connectWS() call #${panel.wsConnectCount} at ${new Date().toLocaleTimeString()}`);
 
@@ -645,12 +620,6 @@
           panel.wsQueue.forEach((m) => panel.ws.send(JSON.stringify(m)));
           panel.wsQueue = [];
 
-          // On a genuine reconnect (dropped connection, network blip, Render
-          // idle timeout, etc.) the backend has no memory of what this
-          // panel was watching - re-send the current subscriptions so the
-          // panel actually resumes live data instead of going silently
-          // stale. Guarded by hasLoadedOnce so this doesn't fire before the
-          // very first chart load has even picked a symbol/expiration yet.
           if (panel.hasLoadedOnce && panel.active) {
             console.warn(`[ws:${panel.symbol}] RECONNECT-RESEND firing (connect #${panel.wsConnectCount}) - this duplicates the normal load's own subscribe if that already happened`);
             panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
@@ -663,11 +632,6 @@
           let msg;
           try { msg = JSON.parse(event.data); } catch (e) { return; }
 
-          // TEMP DEBUG: visible on-page WS activity indicator - lets us
-          // verify message delivery on ANY device (especially mobile,
-          // where remote DevTools access is a real hassle) without needing
-          // console access. Remove once the cross-device flow-delivery
-          // investigation is resolved.
           panel.wsMsgCount = (panel.wsMsgCount || 0) + 1;
           if (msg.type === 'flow') panel.wsFlowCount = (panel.wsFlowCount || 0) + 1;
           const nowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
@@ -685,9 +649,6 @@
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
-            // Alpaca's connection status is global but irrelevant to futures
-            // panels (they use polling, not Alpaca) - don't let it stomp on
-            // the "Polling (free tier)" label those panels set themselves.
             if (isFuturesTicker(panel.symbol)) return;
             if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
@@ -699,7 +660,6 @@
         panel.ws.onclose = (closeEvent) => {
           console.warn(`[ws:${panel.symbol}] onclose fired (connect #${panel.wsConnectCount}) code=${closeEvent.code} reason=${closeEvent.reason || 'none'} wasClean=${closeEvent.wasClean}`);
           panel.setStatus('Disconnected');
-          // simple auto-reconnect after a short delay
           setTimeout(connectWS, 2000);
         };
       }
@@ -738,17 +698,10 @@
 
       panel.centerLastCandle = function () {
         const width = els.chartContainer.clientWidth || 600;
-        // Fit to however many REAL bars we actually have, capped at 200 -
-        // not a fixed 200 regardless of data. If the fetch only returned,
-        // say, 90 bars (thin trading, after-hours, etc.), targeting a fixed
-        // 200 left the rest of the width empty. This way the real candles
-        // always stretch to fill the available space.
         const actualBars = Math.max(1, panel.closeHistory.length);
         const targetVisibleBars = Math.min(200, actualBars);
-        // Floor at 2px so it never gets illegibly thin; cap at 20px so a
-        // handful of bars don't render as absurdly chunky blocks.
         const newBarSpacing = Math.max(2, Math.min(20, width / targetVisibleBars));
-        const rightOffset = 10; // small breathing room, not full-screen centering
+        const rightOffset = 10;
         chart.timeScale().applyOptions({ barSpacing: newBarSpacing, rightOffset });
         chart.timeScale().scrollToPosition(rightOffset, false);
         chart.priceScale('right').applyOptions({ autoScale: true });
@@ -797,8 +750,6 @@
 
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
-        // Every event gets its own marker - no combining same-minute
-        // same-side prints into one "Nx" label.
         panel.flowMarkers.push({
           time: panel.lastBarTime,
           position: isCall ? 'belowBar' : 'aboveBar',
@@ -838,8 +789,6 @@
           }
         }
 
-        // Live MA8/MA20 - recompute from the tail of closeHistory
-        // and update just the current bar's point.
         const hist = panel.closeHistory;
         function updateMA(series, period) {
           if (hist.length < period) return;
@@ -859,17 +808,8 @@
       panel.watchFlow = function (expiration) {
         if (!expiration) return;
         panel.pendingWatchExpiration = expiration;
-        // Send our own just-fetched price along, instead of making the
-        // server rely solely on its cached last-known price for this
-        // symbol - that cache can be stale/empty at the exact moment this
-        // fires (a timing race), which silently produces wildly wrong
-        // "near the money" strikes since the server falls back to
-        // whatever strike happens to be first in Tradier's response.
         panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
 
-        // Safety net: if no flow_watching confirmation arrives within 5s
-        // (message lost, connection hiccup, etc.), retry once automatically
-        // instead of silently staying unsubscribed with no visible sign.
         setTimeout(() => {
           if (panel.pendingWatchExpiration === expiration && panel.active && panel.symbol) {
             console.warn(`[flow:${panel.symbol}] No confirmation received for ${expiration} - retrying`);
@@ -898,12 +838,6 @@
         const previousSymbol = panel.symbol;
         panel.symbol = symbol;
 
-        // Tear down any previous ticker's flow subscription IMMEDIATELY,
-        // before attempting anything else. Without this, there's a window
-        // (during the bars fetch, and especially if it fails) where
-        // panel.symbol already says the NEW ticker but the OLD subscription
-        // is still delivering events - which get mislabeled with the new
-        // symbol's name since the sidebar/markers just read panel.symbol.
         panel.sendWS({ type: 'unwatch_flow' });
         panel.pendingWatchExpiration = null;
 
@@ -913,11 +847,6 @@
         panel.flowMarkers = [];
         candlestickSeries.setMarkers([]);
         panel.showChartError(null);
-        // Only show this placeholder on the very first load. On a ticker
-        // switch, the Alpaca connection itself hasn't changed - overwriting
-        // an already-accurate "Live Feed Connected" here would erase it
-        // and never get corrected, since status only re-broadcasts on an
-        // actual connection state CHANGE, not on every symbol switch.
         if (!panel.hasLoadedOnce) panel.setStatus('Fetching price data...');
 
         let seedCandles;
@@ -932,12 +861,8 @@
           panel.showChartError(`Couldn't load price history: ${err.message}`);
           els.tickerPrice.innerText = '--';
           els.tickerChange.innerText = '';
-          // Clear the chart too - leaving the OLD symbol's candles visible
-          // under the NEW (failed) symbol's label/ticker-overlay would be
-          // just as misleading as the stale-flow bug this whole change
-          // fixes. A failed load should show nothing, not something stale
-          // pretending to belong to the symbol that just failed.
           candlestickSeries.setData([]);
+          volumeSeries.setData([]);
           ma9Series.setData([]);
           ma20Series.setData([]);
           panel.closeHistory = [];
@@ -947,6 +872,11 @@
 
         try {
           candlestickSeries.setData(seedCandles);
+          volumeSeries.setData(seedCandles.map((b) => ({
+            time: b.time,
+            value: b.volume || 0,
+            color: b.close >= b.open ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
+          })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
           ma9Series.setData(computeMA(seedCandles, 8));
           ma20Series.setData(computeMA(seedCandles, 20));
@@ -968,15 +898,9 @@
         panel.updatePercentChange(panel.lastBarPrice);
         panel.hasLoadedOnce = true;
 
-        // one WS message each - the backend handles merging this with
-        // every other connected browser's subscriptions
         panel.sendWS({ type: 'subscribe_price', symbol });
 
         if (isFuturesTicker(symbol)) {
-          // No options data exists for futures yet, and Alpaca's connection
-          // status doesn't apply here (futures use polling, not Alpaca) -
-          // skip both, and label clearly instead of showing a misleading
-          // "Live Feed Connected" that's really about a different market.
           panel.setStatus('(delayed)', '#2b3548');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
@@ -993,10 +917,6 @@
         if (e.key === 'Enter') els.searchBtn.click();
       });
       els.expirationSelect.addEventListener('change', (e) => {
-        // Clear stale entries from the PREVIOUS expiration before watching
-        // the new one - without this, old and new expirations' sweeps mix
-        // together in the sidebar/chart instead of the new one replacing
-        // the old, since only ticker switches used to clear these.
         els.flowList.innerHTML = '';
         panel.flowMarkers = [];
         candlestickSeries.setMarkers([]);
@@ -1015,9 +935,6 @@
 
     panels.forEach((p) => p.loadInitialSeedData(p.symbol));
 
-    // -------------------------------------------------------------
-    // LAYOUT: 1 window vs 2 windows
-    // -------------------------------------------------------------
     document.getElementById('layout-select').addEventListener('change', (e) => {
       const mode = e.target.value;
       const secondPanelRoot = document.querySelector('[data-panel-index="1"]');
@@ -1036,21 +953,10 @@
       });
     });
 
-    // -------------------------------------------------------------
-    // MIN CHART MARKER: adjust CHART_MARKER_PREMIUM_FLOOR live.
-    // Applies to future flow events only - markers already drawn
-    // (or already excluded) don't retroactively change.
-    // -------------------------------------------------------------
     document.getElementById('marker-floor-select').addEventListener('change', (e) => {
       CHART_MARKER_PREMIUM_FLOOR = parseInt(e.target.value, 10);
     });
 
-    // -------------------------------------------------------------
-    // PREMIUM LEADERBOARD: curated-symbol ranking by cumulative option
-    // premium traded today (see lib/tradierHub.js LEADERBOARD_SYMBOLS -
-    // this is NOT a full-market scan, just the most liquid known names).
-    // Click one to load it into panel 0.
-    // -------------------------------------------------------------
     function formatPremiumTotal(n) {
       if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
       return `$${(n / 1000).toFixed(0)}k`;
@@ -1106,14 +1012,6 @@
       document.getElementById('leaderboard-panel').classList.add('hidden');
     });
 
-    // -------------------------------------------------------------
-    // CHECK PREMIUM: on-demand call/put premium lookup for ANY ticker,
-    // not just the curated leaderboard list. First check on a new symbol
-    // starts tracking it from $0; premium accumulates from that point
-    // forward - checking again later (or via the auto-refresh below)
-    // shows it growing, but there's no historical backfill for premium
-    // that traded before the first check.
-    // -------------------------------------------------------------
     let premiumCheckInterval = null;
     let premiumCheckSymbol = null;
 
@@ -1140,7 +1038,6 @@
       premiumCheckSymbol = symbol;
       document.getElementById('premium-check-result').innerText = 'Checking...';
       checkPremium(symbol);
-      // Keep it "live" while this symbol stays checked - refresh every 20s.
       premiumCheckInterval = setInterval(() => checkPremium(symbol), 20_000);
     }
 
