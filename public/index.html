@@ -484,6 +484,14 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="SPY" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
+      <label><strong>Timeframe:</strong></label>
+      <select class="timeframe-select">
+        <option value="1min" selected>1m</option>
+        <option value="5min">5m</option>
+        <option value="15min">15m</option>
+        <option value="30min">30m</option>
+        <option value="1h">1H</option>
+      </select>
       <label><strong>Expiration:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
@@ -514,6 +522,14 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="QQQ" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
+      <label><strong>Timeframe:</strong></label>
+      <select class="timeframe-select">
+        <option value="1min" selected>1m</option>
+        <option value="5min">5m</option>
+        <option value="15min">15m</option>
+        <option value="30min">30m</option>
+        <option value="1h">1H</option>
+      </select>
       <label><strong>Expiration:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
@@ -552,10 +568,10 @@
     const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
     const BIG_FLOW_THRESHOLD = 250000; // only genuinely large prints show in the "any expiration" alert feature - with 6 expirations x ~40 contracts, showing everything above MIN_FLOW_PREMIUM would be overwhelming
 
-    async function fetchHistoricalBars(symbol) {
+    async function fetchHistoricalBars(symbol, interval) {
       let response;
       try {
-        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}`);
+        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
       } catch (networkErr) {
         throw new Error(`Can't reach the backend at ${BACKEND_HTTP} - it may be waking up from sleep (Render free tier), try again in a moment`);
       }
@@ -604,6 +620,7 @@
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
         expirationSelect: root.querySelector('.expiration-select'),
+        timeframeSelect: root.querySelector('.timeframe-select'),
         tickerSymbol: root.querySelector('.ticker-symbol'),
         tickerPrice: root.querySelector('.ticker-price'),
         tickerChange: root.querySelector('.ticker-change'),
@@ -656,6 +673,8 @@
         closeHistory: [],
         previousClose: null,
         bigFlowEnabled: true,
+        interval: '1min', // sent to the backend - matches the Timeframe dropdown's value
+        intervalSeconds: 60, // used to bucket live ticks into the right candle width
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -878,7 +897,7 @@
 
       panel.handlePriceTick = function (tradePrice, timeMs) {
         const tradeTime = Math.floor(timeMs / 1000);
-        const currentMinuteBucket = Math.floor(tradeTime / 60) * 60;
+        const currentMinuteBucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
 
         if (currentMinuteBucket > panel.lastBarTime) {
           panel.lastBarTime = currentMinuteBucket;
@@ -916,10 +935,82 @@
         panel.lastBarPrice = tradePrice;
       };
 
+      panel.callWallLine = null;
+      panel.putWallLine = null;
+      panel.wallRefreshTimer = null;
+
+      // Computes the "Call Wall" (strike with the most total call volume
+      // today) and "Put Wall" (same, for puts) from Tradier's full option
+      // chain - which already reports per-contract volume, so this is just
+      // aggregation, no gamma/Greeks math needed. Drawn as horizontal
+      // price lines on the candlestick chart.
+      panel.refreshCallPutWalls = async function (expiration) {
+        if (!expiration || isFuturesTicker(panel.symbol)) return;
+
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+          const callVolumeByStrike = new Map();
+          const putVolumeByStrike = new Map();
+          for (const o of data.options || []) {
+            const vol = parseFloat(o.volume) || 0;
+            if (vol <= 0) continue;
+            const map = o.option_type === 'call' ? callVolumeByStrike : putVolumeByStrike;
+            map.set(o.strike, (map.get(o.strike) || 0) + vol);
+          }
+
+          const topStrike = (map) => {
+            let best = null;
+            let bestVol = -1;
+            for (const [strike, vol] of map) {
+              if (vol > bestVol) { bestVol = vol; best = strike; }
+            }
+            return best;
+          };
+
+          const callWall = topStrike(callVolumeByStrike);
+          const putWall = topStrike(putVolumeByStrike);
+
+          if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
+          if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+
+          if (callWall != null) {
+            panel.callWallLine = candlestickSeries.createPriceLine({
+              price: callWall,
+              color: '#00c853',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: 'Call Wall',
+            });
+          }
+          if (putWall != null) {
+            panel.putWallLine = candlestickSeries.createPriceLine({
+              price: putWall,
+              color: '#ff5252',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: 'Put Wall',
+            });
+          }
+        } catch (err) {
+          console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
+        }
+      };
+
       panel.watchFlow = function (expiration) {
         if (!expiration) return;
         panel.pendingWatchExpiration = expiration;
         panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
+
+        panel.refreshCallPutWalls(expiration);
+        // Volume accumulates through the day - keep the walls current
+        // instead of freezing them at whatever they were on first load.
+        clearInterval(panel.wallRefreshTimer);
+        panel.wallRefreshTimer = setInterval(() => panel.refreshCallPutWalls(expiration), 60_000);
 
         setTimeout(() => {
           if (panel.pendingWatchExpiration === expiration && panel.active && panel.symbol) {
@@ -952,6 +1043,14 @@
         panel.sendWS({ type: 'unwatch_flow' });
         panel.pendingWatchExpiration = null;
 
+        // Clear the previous ticker's wall lines/refresh timer - without
+        // this they'd keep showing (and updating) on the new symbol's
+        // chart, at price levels that belong to a completely different
+        // underlying.
+        clearInterval(panel.wallRefreshTimer);
+        if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
+        if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
         els.flowList.innerHTML = '';
@@ -962,7 +1061,7 @@
 
         let seedCandles;
         try {
-          const result = await fetchHistoricalBars(symbol);
+          const result = await fetchHistoricalBars(symbol, panel.interval);
           seedCandles = result.bars;
           panel.previousClose = result.previousClose;
           console.log(`[chart:${symbol}] Loaded ${seedCandles.length} real bars`, seedCandles[seedCandles.length - 1]);
@@ -1048,6 +1147,14 @@
       });
       els.tickerInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') els.searchBtn.click();
+      });
+      els.timeframeSelect.addEventListener('change', (e) => {
+        const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600 };
+        panel.interval = e.target.value;
+        panel.intervalSeconds = INTERVAL_SECONDS[panel.interval] || 60;
+        // Full reload at the new timeframe - same symbol, but candles,
+        // MAs, volume, and live-tick bucketing all need to reset to match.
+        panel.loadInitialSeedData(panel.symbol);
       });
       els.expirationSelect.addEventListener('change', (e) => {
         els.flowList.innerHTML = '';
