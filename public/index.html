@@ -449,9 +449,16 @@
       background-color: #364153;
     }
 
+    .volwall-wrap {
+      position: relative; /* anchor for the panel below - independent of toolbar wrapping */
+      display: inline-block;
+    }
+
     .volwall-panel {
       position: absolute;
-      margin-top: 44px;
+      top: 100%;
+      left: 0;
+      margin-top: 6px;
       z-index: 50;
       background-color: #131822;
       border: 1px solid #1f293d;
@@ -515,13 +522,13 @@
     }
 
     .wall-label.call-wall-label {
-      background-color: rgba(0, 200, 83, 0.85);
-      color: #06210f;
+      background-color: transparent;
+      color: #ffffff;
     }
 
     .wall-label.put-wall-label {
-      background-color: rgba(255, 82, 82, 0.85);
-      color: #2b0d0d;
+      background-color: transparent;
+      color: #ffffff;
     }
   </style>
 
@@ -574,7 +581,7 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="SPY" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
-      <label><strong>Timeframe:</strong></label>
+      <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
         <option value="5min">5m</option>
@@ -582,19 +589,21 @@
         <option value="30min">30m</option>
         <option value="1h">1H</option>
       </select>
-      <label><strong>Expiration:</strong></label>
+      <label><strong>EXP:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
-      <button class="volwall-toggle-btn">Vol by Strike</button>
-      <div class="volwall-panel hidden">
-        <div class="volwall-header">
-          <span class="volwall-strike-col"></span>
-          <span class="volwall-call-col">Calls</span>
-          <span class="volwall-put-col">Puts</span>
+      <div class="volwall-wrap">
+        <button class="volwall-toggle-btn">Vol by Strike</button>
+        <div class="volwall-panel hidden">
+          <div class="volwall-header">
+            <span class="volwall-strike-col"></span>
+            <span class="volwall-call-col">Calls</span>
+            <span class="volwall-put-col">Puts</span>
+          </div>
+          <div class="volwall-list">Loading...</div>
         </div>
-        <div class="volwall-list">Loading...</div>
       </div>
     </div>
     <div class="main-layout">
@@ -623,7 +632,7 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="QQQ" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
-      <label><strong>Timeframe:</strong></label>
+      <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
         <option value="5min">5m</option>
@@ -631,19 +640,21 @@
         <option value="30min">30m</option>
         <option value="1h">1H</option>
       </select>
-      <label><strong>Expiration:</strong></label>
+      <label><strong>EXP:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
-      <button class="volwall-toggle-btn">Vol by Strike</button>
-      <div class="volwall-panel hidden">
-        <div class="volwall-header">
-          <span class="volwall-strike-col"></span>
-          <span class="volwall-call-col">Calls</span>
-          <span class="volwall-put-col">Puts</span>
+      <div class="volwall-wrap">
+        <button class="volwall-toggle-btn">Vol by Strike</button>
+        <div class="volwall-panel hidden">
+          <div class="volwall-header">
+            <span class="volwall-strike-col"></span>
+            <span class="volwall-call-col">Calls</span>
+            <span class="volwall-put-col">Puts</span>
+          </div>
+          <div class="volwall-list">Loading...</div>
         </div>
-        <div class="volwall-list">Loading...</div>
       </div>
     </div>
     <div class="main-layout">
@@ -1217,19 +1228,23 @@
           }
           panel.positionWallLabels();
 
-          // Per-strike breakdown list, sorted by strike, limited to the
-          // near-the-money range around wherever the current price sits -
-          // matches the reference image's format (call/put volume + what
-          // share of that strike's total each side represents).
+          // Per-strike breakdown list - 4 strikes above the higher wall,
+          // 4 below the lower wall, with everything between (including
+          // both walls themselves) always shown. Keeps the list a
+          // manageable size instead of dumping the whole chain.
           const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
-          const centerStrike = panel.lastBarPrice;
-          const nearby = sortedStrikes
-            .map((s) => ({ strike: s, dist: Math.abs(s - centerStrike) }))
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, 20)
-            .map((x) => x.strike)
-            .sort((a, b) => b - a); // display highest strike first, like the reference image
+          let nearby = sortedStrikes;
+          if (callWall != null && putWall != null) {
+            const lowerWall = Math.min(callWall, putWall);
+            const upperWall = Math.max(callWall, putWall);
+            const lowerIdx = sortedStrikes.indexOf(lowerWall);
+            const upperIdx = sortedStrikes.indexOf(upperWall);
+            const start = Math.max(0, lowerIdx - 4);
+            const end = Math.min(sortedStrikes.length - 1, upperIdx + 4);
+            nearby = sortedStrikes.slice(start, end + 1);
+          }
+          nearby = nearby.slice().sort((a, b) => b - a); // display highest strike first, like the reference image
 
           els.volwallList.innerHTML = nearby.map((strike) => {
             const { c, p, cPct, pPct } = pctPair(strike);
