@@ -449,6 +449,11 @@
       background-color: #364153;
     }
 
+    .volwall-toggle-btn.active {
+      background-color: #7a5f00;
+      border-color: #a68100;
+    }
+
     .volwall-wrap {
       position: relative; /* anchor for the panel below - independent of toolbar wrapping */
       display: inline-block;
@@ -593,7 +598,6 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <button class="bigflow-toggle-btn active">Big Flow: On</button>
       <div class="volwall-wrap">
         <button class="volwall-toggle-btn">Vol by Strike</button>
         <div class="volwall-panel hidden">
@@ -605,6 +609,7 @@
           <div class="volwall-list">Loading...</div>
         </div>
       </div>
+      <button class="bigflow-toggle-btn active">Big Flow: On</button>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -644,7 +649,6 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <button class="bigflow-toggle-btn active">Big Flow: On</button>
       <div class="volwall-wrap">
         <button class="volwall-toggle-btn">Vol by Strike</button>
         <div class="volwall-panel hidden">
@@ -656,6 +660,7 @@
           <div class="volwall-list">Loading...</div>
         </div>
       </div>
+      <button class="bigflow-toggle-btn active">Big Flow: On</button>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -1443,6 +1448,7 @@
 
       els.volwallToggleBtn.addEventListener('click', () => {
         els.volwallPanel.classList.toggle('hidden');
+        els.volwallToggleBtn.classList.toggle('active', !els.volwallPanel.classList.contains('hidden'));
       });
 
       window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); });
