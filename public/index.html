@@ -162,6 +162,7 @@
     }
 
     .toolbar {
+      position: relative; /* anchor for the volwall-panel dropdown */
       display: flex;
       align-items: center;
       gap: 12px;
@@ -433,6 +434,72 @@
       font-size: 10px;
       letter-spacing: 0.3px;
     }
+
+    .volwall-toggle-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .volwall-toggle-btn:hover {
+      background-color: #364153;
+    }
+
+    .volwall-panel {
+      position: absolute;
+      margin-top: 44px;
+      z-index: 50;
+      background-color: #131822;
+      border: 1px solid #1f293d;
+      border-radius: 8px;
+      padding: 10px;
+      min-width: 230px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+
+    .volwall-panel.hidden {
+      display: none;
+    }
+
+    .volwall-header, .volwall-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 3px 4px;
+      font-size: 12px;
+    }
+
+    .volwall-header {
+      border-bottom: 1px solid #1f293d;
+      margin-bottom: 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #8fa0be;
+    }
+
+    .volwall-strike-col {
+      width: 40px;
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    .volwall-call-col, .volwall-put-col {
+      flex: 1;
+    }
+
+    .volwall-row.pivot-row {
+      background-color: #2b2408;
+      border-radius: 4px;
+    }
+
+    .volwall-call-pct { color: #00c853; }
+    .volwall-put-pct { color: #ff5252; }
   </style>
 
   <!-- Lightweight Charts v4 Standalone -->
@@ -497,6 +564,15 @@
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
+      <button class="volwall-toggle-btn">Vol by Strike</button>
+      <div class="volwall-panel hidden">
+        <div class="volwall-header">
+          <span class="volwall-strike-col"></span>
+          <span class="volwall-call-col">Calls</span>
+          <span class="volwall-put-col">Puts</span>
+        </div>
+        <div class="volwall-list">Loading...</div>
+      </div>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -535,6 +611,15 @@
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
+      <button class="volwall-toggle-btn">Vol by Strike</button>
+      <div class="volwall-panel hidden">
+        <div class="volwall-header">
+          <span class="volwall-strike-col"></span>
+          <span class="volwall-call-col">Calls</span>
+          <span class="volwall-put-col">Puts</span>
+        </div>
+        <div class="volwall-list">Loading...</div>
+      </div>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -630,6 +715,9 @@
         chartErrorBanner: root.querySelector('.chart-error-banner'),
         flowList: root.querySelector('.flow-list'),
         bigflowToggleBtn: root.querySelector('.bigflow-toggle-btn'),
+        volwallToggleBtn: root.querySelector('.volwall-toggle-btn'),
+        volwallPanel: root.querySelector('.volwall-panel'),
+        volwallList: root.querySelector('.volwall-list'),
       };
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
@@ -937,6 +1025,7 @@
 
       panel.callWallLine = null;
       panel.putWallLine = null;
+      panel.pivotLine = null;
       panel.wallRefreshTimer = null;
 
       // Computes the "Call Wall" (strike with the most total call volume
@@ -973,14 +1062,26 @@
           const callWall = topStrike(callVolumeByStrike);
           const putWall = topStrike(putVolumeByStrike);
 
+          // Pivot: the strike with the most TOTAL (call+put combined)
+          // volume - a separate, third level from either wall alone,
+          // representing where the most overall activity is concentrated.
+          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
+          let pivot = null;
+          let pivotVol = -1;
+          for (const strike of allStrikes) {
+            const total = (callVolumeByStrike.get(strike) || 0) + (putVolumeByStrike.get(strike) || 0);
+            if (total > pivotVol) { pivotVol = total; pivot = strike; }
+          }
+
           if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
           if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+          if (panel.pivotLine) { candlestickSeries.removePriceLine(panel.pivotLine); panel.pivotLine = null; }
 
           if (callWall != null) {
             panel.callWallLine = candlestickSeries.createPriceLine({
               price: callWall,
               color: '#00c853',
-              lineWidth: 1,
+              lineWidth: 3,
               lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
               title: 'Call Wall',
@@ -990,14 +1091,53 @@
             panel.putWallLine = candlestickSeries.createPriceLine({
               price: putWall,
               color: '#ff5252',
-              lineWidth: 1,
+              lineWidth: 3,
               lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
               title: 'Put Wall',
             });
           }
+          if (pivot != null) {
+            panel.pivotLine = candlestickSeries.createPriceLine({
+              price: pivot,
+              color: '#ffc107',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: 'Pivot',
+            });
+          }
+
+          // Per-strike breakdown list, sorted by strike, limited to the
+          // near-the-money range around wherever the pivot/current price
+          // sits - matches the reference image's format (call/put volume
+          // + what share of that strike's total each side represents).
+          const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
+          const centerStrike = pivot ?? panel.lastBarPrice;
+          const nearby = sortedStrikes
+            .map((s) => ({ strike: s, dist: Math.abs(s - centerStrike) }))
+            .sort((a, b) => a.dist - b.dist)
+            .slice(0, 20)
+            .map((x) => x.strike)
+            .sort((a, b) => b - a); // display highest strike first, like the reference image
+
+          els.volwallList.innerHTML = nearby.map((strike) => {
+            const c = callVolumeByStrike.get(strike) || 0;
+            const p = putVolumeByStrike.get(strike) || 0;
+            const total = c + p;
+            const cPct = total > 0 ? ((c / total) * 100).toFixed(1) : '0.0';
+            const pPct = total > 0 ? ((p / total) * 100).toFixed(1) : '0.0';
+            const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
+            const isPivotRow = strike === pivot;
+            return `<div class="volwall-row${isPivotRow ? ' pivot-row' : ''}">` +
+              `<span class="volwall-strike-col">${strike}</span>` +
+              `<span class="volwall-call-col">C:${fmt(c)} <span class="volwall-call-pct">(${cPct}%)</span></span>` +
+              `<span class="volwall-put-col">P:${fmt(p)} <span class="volwall-put-pct">(${pPct}%)</span></span>` +
+              `</div>`;
+          }).join('') || 'No volume data yet';
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
+          els.volwallList.innerText = 'Failed to load';
         }
       };
 
@@ -1050,6 +1190,7 @@
         clearInterval(panel.wallRefreshTimer);
         if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
         if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+        if (panel.pivotLine) { candlestickSeries.removePriceLine(panel.pivotLine); panel.pivotLine = null; }
 
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
@@ -1173,6 +1314,10 @@
         } else {
           panel.sendWS({ type: 'unwatch_big_flow' });
         }
+      });
+
+      els.volwallToggleBtn.addEventListener('click', () => {
+        els.volwallPanel.classList.toggle('hidden');
       });
 
       window.addEventListener('resize', () => panel.centerLastCandle());
