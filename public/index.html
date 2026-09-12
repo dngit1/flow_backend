@@ -462,7 +462,7 @@
     .volwall-panel {
       position: absolute;
       top: 100%;
-      left: 0;
+      right: 0;
       margin-top: 6px;
       z-index: 50;
       background-color: #131822;
@@ -524,6 +524,10 @@
       font-weight: 700;
       white-space: nowrap;
       pointer-events: none;
+    }
+
+    .wall-label.below-line {
+      transform: translate(-50%, 4px); /* flips to sit below the line instead of above, used when Call Wall and Put Wall share the same strike */
     }
 
     .wall-label.call-wall-label {
@@ -1138,6 +1142,7 @@
       // mapping shifts as new data comes in.
       panel.positionWallLabels = function () {
         const height = els.chartContainer.clientHeight || 0;
+        const sameStrike = panel.callWallPrice != null && panel.putWallPrice != null && panel.callWallPrice === panel.putWallPrice;
 
         if (panel.callWallPrice != null) {
           const y = candlestickSeries.priceToCoordinate(panel.callWallPrice);
@@ -1156,6 +1161,10 @@
           if (y != null && y >= 0 && y <= height) {
             els.putWallLabel.style.display = 'block';
             els.putWallLabel.style.top = `${y}px`;
+            // Both walls on the same strike would otherwise stack their
+            // labels directly on top of each other - flip Put Wall below
+            // the line so they stay readable side by side.
+            els.putWallLabel.classList.toggle('below-line', sameStrike);
           } else {
             els.putWallLabel.style.display = 'none';
           }
