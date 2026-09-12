@@ -785,9 +785,10 @@
         layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
         timeScale: { timeVisible: true, secondsVisible: false, barSpacing: 8 },
-        // Three vertical bands sharing this one chart: price (top ~55%),
-        // RSI (middle ~18%), volume (bottom ~15%), with small gaps between.
-        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.40 } },
+        // Three vertical bands sharing this one chart: price (top ~65%,
+        // more room), RSI pushed down near volume (bottom ~28%, some
+        // overlap with volume is fine), volume (bottom ~15%).
+        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.30 } },
       });
 
       const candlestickSeries = chart.addCandlestickSeries({
@@ -804,7 +805,7 @@
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
 
       const RSI_PERIOD = 14;
       const rsiSeries = chart.addLineSeries({
@@ -813,14 +814,14 @@
         priceScaleId: 'rsi',
         priceLineVisible: false,
         lastValueVisible: true,
-        title: `RSI${RSI_PERIOD}`,
+        title: 'RSI',
       });
-      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.62, bottom: 0.20 } });
+      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.72, bottom: 0.12 } });
       // RSI's own scale is fixed 0-100 (not auto-fit to data), so the
       // 70/30 reference lines always sit at their real, meaningful levels.
       rsiSeries.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
-      rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Overbought' });
-      rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Oversold' });
+      rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
+      rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
 
       const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA8', lineType: 1 });
       const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
@@ -1430,6 +1431,13 @@
       });
 
       window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); });
+
+      // Panning/zooming the chart shifts the auto-scaled price range (and
+      // therefore the price->pixel mapping) just as much as a live tick
+      // does - without this, the labels only caught up on the next tick
+      // or 60s refresh, visibly lagging behind the actual line while
+      // the user was actively scrolling/zooming.
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => panel.positionWallLabels());
 
       return panel;
     }
