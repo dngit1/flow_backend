@@ -402,6 +402,11 @@
       border-color: #a68100;
     }
 
+    .bigflow-toggle-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     /* Big-flow entries (any expiration, not just the selected one) get a
        distinct gold border and an expiration-date line, so they're never
        confused with the normal single-expiration sidebar entries. */
@@ -837,8 +842,11 @@
       panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side) {
         if (!panel.lastBarTime) return;
 
+        const isFutures = isFuturesTicker(panel.symbol);
+        const unitLabel = isFutures ? 'contracts' : 'sh';
+        const tagLabel = isFutures ? 'CONTRACTS' : 'SHARES';
         const isBuy = side === 'BUY';
-        const formattedShares = shareSize.toLocaleString('en-US');
+        const formattedSize = shareSize.toLocaleString('en-US');
         const formattedVal = dollarValue >= 1_000_000 ? `$${(dollarValue / 1_000_000).toFixed(2)}M` : `$${(dollarValue / 1000).toFixed(0)}k`;
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
 
@@ -846,8 +854,8 @@
         card.className = `flow-card stockflow ${isBuy ? 'call' : 'put'}`;
         card.innerHTML = `
           <div class="flow-details">
-            <span class="flow-stockflow-tag">SHARES</span>
-            <span class="flow-strike">${panel.symbol} ${formattedShares} sh</span>
+            <span class="flow-stockflow-tag">${tagLabel}</span>
+            <span class="flow-strike">${panel.symbol} ${formattedSize} ${unitLabel}</span>
             <span style="color: #8fa0be; font-size: 11px;">${isBuy ? 'BOUGHT' : 'SOLD'}${timeStr ? ' &middot; ' + timeStr : ''}</span>
           </div>
           <span class="flow-premium">${formattedVal}</span>
@@ -860,7 +868,7 @@
           position: isBuy ? 'belowBar' : 'aboveBar',
           color: '#9c27b0',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
-          text: `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedShares} sh (${formattedVal})`,
+          text: `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedSize} ${unitLabel} (${formattedVal})`,
           size: MARKER_SIZE,
         });
         if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
@@ -1003,18 +1011,33 @@
 
         panel.sendWS({ type: 'subscribe_price', symbol });
 
-        // If big-flow (all expirations) was on for the previous ticker,
-        // re-point it at the new one - the server just overwrites the
-        // same tracked-contracts entry, no separate unwatch needed.
-        if (panel.bigFlowEnabled) {
-          panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
-        }
-
         if (isFuturesTicker(symbol)) {
           panel.setStatus('Live Feed Connected', '#1b5e20');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
+
+          // Big Flow needs an options chain, which doesn't exist for
+          // futures - without this, it silently errors in a loop (a
+          // watch_big_flow request that can never succeed) every time a
+          // futures ticker loads with Big Flow left on from a stock.
+          if (panel.bigFlowEnabled) {
+            panel.bigFlowEnabled = false;
+            panel.sendWS({ type: 'unwatch_big_flow' });
+          }
+          els.bigflowToggleBtn.disabled = true;
+          els.bigflowToggleBtn.innerText = 'Big Flow: N/A (futures)';
+          els.bigflowToggleBtn.classList.remove('active');
         } else {
+          els.bigflowToggleBtn.disabled = false;
+          els.bigflowToggleBtn.innerText = `Big Flow: ${panel.bigFlowEnabled ? 'On' : 'Off'}`;
+          els.bigflowToggleBtn.classList.toggle('active', panel.bigFlowEnabled);
+
+          // If big-flow was on for the previous ticker, re-point it at the
+          // new one - the server just overwrites the same tracked-contracts
+          // entry, no separate unwatch needed.
+          if (panel.bigFlowEnabled) {
+            panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
+          }
           panel.loadExpirationsDropdown();
         }
       };
