@@ -500,6 +500,29 @@
 
     .volwall-call-pct { color: #00c853; }
     .volwall-put-pct { color: #ff5252; }
+
+    .wall-label {
+      position: absolute;
+      left: 50%;
+      transform: translate(-50%, -100%);
+      z-index: 15;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .wall-label.call-wall-label {
+      background-color: rgba(0, 200, 83, 0.85);
+      color: #06210f;
+    }
+
+    .wall-label.put-wall-label {
+      background-color: rgba(255, 82, 82, 0.85);
+      color: #2b0d0d;
+    }
   </style>
 
   <!-- Lightweight Charts v4 Standalone -->
@@ -585,6 +608,8 @@
         </div>
         <div class="chart-container"></div>
         <div class="chart-error-banner"></div>
+        <div class="wall-label call-wall-label" style="display:none;"></div>
+        <div class="wall-label put-wall-label" style="display:none;"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -632,6 +657,8 @@
         </div>
         <div class="chart-container"></div>
         <div class="chart-error-banner"></div>
+        <div class="wall-label call-wall-label" style="display:none;"></div>
+        <div class="wall-label put-wall-label" style="display:none;"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -699,6 +726,37 @@
       return points;
     }
 
+    // Standard Wilder's-smoothing RSI (same method used by virtually every
+    // charting platform) - needs `period` bars just to seed the first
+    // average, so the line starts partway into the visible history, same
+    // as MA200 did before it was removed.
+    function computeRSI(bars, period) {
+      if (bars.length <= period) return [];
+      const points = [];
+
+      let gainSum = 0;
+      let lossSum = 0;
+      for (let i = 1; i <= period; i++) {
+        const change = bars[i].close - bars[i - 1].close;
+        if (change > 0) gainSum += change; else lossSum += -change;
+      }
+      let avgGain = gainSum / period;
+      let avgLoss = lossSum / period;
+
+      const rsiFrom = (ag, al) => (al === 0 ? 100 : 100 - 100 / (1 + ag / al));
+      points.push({ time: bars[period].time, value: rsiFrom(avgGain, avgLoss) });
+
+      for (let i = period + 1; i < bars.length; i++) {
+        const change = bars[i].close - bars[i - 1].close;
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        points.push({ time: bars[i].time, value: rsiFrom(avgGain, avgLoss) });
+      }
+      return points;
+    }
+
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
       const els = {
@@ -718,6 +776,8 @@
         volwallToggleBtn: root.querySelector('.volwall-toggle-btn'),
         volwallPanel: root.querySelector('.volwall-panel'),
         volwallList: root.querySelector('.volwall-list'),
+        callWallLabel: root.querySelector('.call-wall-label'),
+        putWallLabel: root.querySelector('.put-wall-label'),
       };
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
@@ -725,7 +785,9 @@
         layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
         timeScale: { timeVisible: true, secondsVisible: false, barSpacing: 8 },
-        rightPriceScale: { scaleMargins: { top: 0.3, bottom: 0.28 } },
+        // Three vertical bands sharing this one chart: price (top ~55%),
+        // RSI (middle ~18%), volume (bottom ~15%), with small gaps between.
+        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.40 } },
       });
 
       const candlestickSeries = chart.addCandlestickSeries({
@@ -742,7 +804,23 @@
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+      const RSI_PERIOD = 14;
+      const rsiSeries = chart.addLineSeries({
+        color: '#ba68c8',
+        lineWidth: 2,
+        priceScaleId: 'rsi',
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: `RSI${RSI_PERIOD}`,
+      });
+      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.62, bottom: 0.20 } });
+      // RSI's own scale is fixed 0-100 (not auto-fit to data), so the
+      // 70/30 reference lines always sit at their real, meaningful levels.
+      rsiSeries.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+      rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Overbought' });
+      rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Oversold' });
 
       const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA8', lineType: 1 });
       const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
@@ -756,6 +834,7 @@
         chart,
         candlestickSeries,
         volumeSeries,
+        rsiSeries,
         ma9Series,
         ma20Series,
         closeHistory: [],
@@ -1016,16 +1095,19 @@
         }
         updateMA(ma9Series, 8);
         updateMA(ma20Series, 20);
+        rsiSeries.setData(computeRSI(hist, RSI_PERIOD));
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
         panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
+        panel.positionWallLabels();
       };
 
       panel.callWallLine = null;
       panel.putWallLine = null;
-      panel.pivotLine = null;
+      panel.callWallPrice = null;
+      panel.putWallPrice = null;
       panel.wallRefreshTimer = null;
 
       // Computes the "Call Wall" (strike with the most total call volume
@@ -1033,6 +1115,38 @@
       // chain - which already reports per-contract volume, so this is just
       // aggregation, no gamma/Greeks math needed. Drawn as horizontal
       // price lines on the candlestick chart.
+      // Repositions the floating wall labels to sit just above their
+      // line's current price level - called on every refresh, every live
+      // tick, and on resize, since autoScale means the price->pixel
+      // mapping shifts as new data comes in.
+      panel.positionWallLabels = function () {
+        const height = els.chartContainer.clientHeight || 0;
+
+        if (panel.callWallPrice != null) {
+          const y = candlestickSeries.priceToCoordinate(panel.callWallPrice);
+          if (y != null && y >= 0 && y <= height) {
+            els.callWallLabel.style.display = 'block';
+            els.callWallLabel.style.top = `${y}px`;
+          } else {
+            els.callWallLabel.style.display = 'none'; // off-screen (scrolled/zoomed away) - hide rather than show floating in the wrong place
+          }
+        } else {
+          els.callWallLabel.style.display = 'none';
+        }
+
+        if (panel.putWallPrice != null) {
+          const y = candlestickSeries.priceToCoordinate(panel.putWallPrice);
+          if (y != null && y >= 0 && y <= height) {
+            els.putWallLabel.style.display = 'block';
+            els.putWallLabel.style.top = `${y}px`;
+          } else {
+            els.putWallLabel.style.display = 'none';
+          }
+        } else {
+          els.putWallLabel.style.display = 'none';
+        }
+      };
+
       panel.refreshCallPutWalls = async function (expiration) {
         if (!expiration || isFuturesTicker(panel.symbol)) return;
 
@@ -1062,20 +1176,21 @@
           const callWall = topStrike(callVolumeByStrike);
           const putWall = topStrike(putVolumeByStrike);
 
-          // Pivot: the strike with the most TOTAL (call+put combined)
-          // volume - a separate, third level from either wall alone,
-          // representing where the most overall activity is concentrated.
-          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
-          let pivot = null;
-          let pivotVol = -1;
-          for (const strike of allStrikes) {
-            const total = (callVolumeByStrike.get(strike) || 0) + (putVolumeByStrike.get(strike) || 0);
-            if (total > pivotVol) { pivotVol = total; pivot = strike; }
-          }
+          const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
+          const pctPair = (strike) => {
+            const c = callVolumeByStrike.get(strike) || 0;
+            const p = putVolumeByStrike.get(strike) || 0;
+            const total = c + p;
+            const cPct = total > 0 ? ((c / total) * 100).toFixed(0) : '0';
+            const pPct = total > 0 ? ((p / total) * 100).toFixed(0) : '0';
+            return { c, p, cPct, pPct };
+          };
 
           if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
           if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
-          if (panel.pivotLine) { candlestickSeries.removePriceLine(panel.pivotLine); panel.pivotLine = null; }
+
+          panel.callWallPrice = callWall;
+          panel.putWallPrice = putWall;
 
           if (callWall != null) {
             panel.callWallLine = candlestickSeries.createPriceLine({
@@ -1084,8 +1199,9 @@
               lineWidth: 3,
               lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
-              title: 'Call Wall',
             });
+            const { c, p, cPct, pPct } = pctPair(callWall);
+            els.callWallLabel.innerText = `CALL WALL ${callWall} — Call: ${fmt(c)} (${cPct}%), Put: ${fmt(p)} (${pPct}%)`;
           }
           if (putWall != null) {
             panel.putWallLine = candlestickSeries.createPriceLine({
@@ -1094,26 +1210,19 @@
               lineWidth: 3,
               lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
-              title: 'Put Wall',
             });
+            const { c, p, cPct, pPct } = pctPair(putWall);
+            els.putWallLabel.innerText = `PUT WALL ${putWall} — Call: ${fmt(c)} (${cPct}%), Put: ${fmt(p)} (${pPct}%)`;
           }
-          if (pivot != null) {
-            panel.pivotLine = candlestickSeries.createPriceLine({
-              price: pivot,
-              color: '#ffc107',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-              title: 'Pivot',
-            });
-          }
+          panel.positionWallLabels();
 
           // Per-strike breakdown list, sorted by strike, limited to the
-          // near-the-money range around wherever the pivot/current price
-          // sits - matches the reference image's format (call/put volume
-          // + what share of that strike's total each side represents).
+          // near-the-money range around wherever the current price sits -
+          // matches the reference image's format (call/put volume + what
+          // share of that strike's total each side represents).
+          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
-          const centerStrike = pivot ?? panel.lastBarPrice;
+          const centerStrike = panel.lastBarPrice;
           const nearby = sortedStrikes
             .map((s) => ({ strike: s, dist: Math.abs(s - centerStrike) }))
             .sort((a, b) => a.dist - b.dist)
@@ -1122,14 +1231,9 @@
             .sort((a, b) => b - a); // display highest strike first, like the reference image
 
           els.volwallList.innerHTML = nearby.map((strike) => {
-            const c = callVolumeByStrike.get(strike) || 0;
-            const p = putVolumeByStrike.get(strike) || 0;
-            const total = c + p;
-            const cPct = total > 0 ? ((c / total) * 100).toFixed(1) : '0.0';
-            const pPct = total > 0 ? ((p / total) * 100).toFixed(1) : '0.0';
-            const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
-            const isPivotRow = strike === pivot;
-            return `<div class="volwall-row${isPivotRow ? ' pivot-row' : ''}">` +
+            const { c, p, cPct, pPct } = pctPair(strike);
+            const isWallRow = strike === callWall || strike === putWall;
+            return `<div class="volwall-row${isWallRow ? ' pivot-row' : ''}">` +
               `<span class="volwall-strike-col">${strike}</span>` +
               `<span class="volwall-call-col">C:${fmt(c)} <span class="volwall-call-pct">(${cPct}%)</span></span>` +
               `<span class="volwall-put-col">P:${fmt(p)} <span class="volwall-put-pct">(${pPct}%)</span></span>` +
@@ -1190,7 +1294,10 @@
         clearInterval(panel.wallRefreshTimer);
         if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
         if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
-        if (panel.pivotLine) { candlestickSeries.removePriceLine(panel.pivotLine); panel.pivotLine = null; }
+        panel.callWallPrice = null;
+        panel.putWallPrice = null;
+        els.callWallLabel.style.display = 'none';
+        els.putWallLabel.style.display = 'none';
 
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
@@ -1214,6 +1321,7 @@
           els.tickerChange.innerText = '';
           candlestickSeries.setData([]);
           volumeSeries.setData([]);
+          rsiSeries.setData([]);
           ma9Series.setData([]);
           ma20Series.setData([]);
           panel.closeHistory = [];
@@ -1229,6 +1337,7 @@
             color: b.close >= b.open ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
           })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
+          rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
           ma9Series.setData(computeMA(seedCandles, 8));
           ma20Series.setData(computeMA(seedCandles, 20));
           panel.centerLastCandle();
@@ -1320,7 +1429,7 @@
         els.volwallPanel.classList.toggle('hidden');
       });
 
-      window.addEventListener('resize', () => panel.centerLastCandle());
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); });
 
       return panel;
     }
