@@ -124,6 +124,7 @@ const tradierHub = createTradierHub({
 const futuresHub = createFuturesHub({
   apiKey: MASSIVE_API_KEY,
   onPrice: (ticker, payload) => broadcastPrice(ticker, payload),
+  onBigTrade: (ticker, payload) => broadcastStockFlow(ticker, payload), // same "large print on the underlying" concept as stocks, same broadcast function
 });
 
 app.use('/api', createDataProxyRouter({
