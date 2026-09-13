@@ -1111,7 +1111,7 @@
           } else if (msg.type === 'big_flow_watching') {
             console.log(`[bigflow:${panel.symbol}] watching ${msg.contractCount} contracts across multiple expirations`);
           } else if (msg.type === 'stock_flow' && msg.symbol === panel.symbol) {
-            panel.addStockFlowMarker(msg.size, msg.dollarValue, msg.timeMs, msg.side);
+            panel.addStockFlowMarker(msg.size, msg.dollarValue, msg.timeMs, msg.side, msg.sourceSymbol);
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
@@ -1236,7 +1236,7 @@
       // Large trades on the underlying STOCK's shares (not options) -
       // separate from the option-flow functions above since shares don't
       // have a strike/type/expiration, just size and dollar value.
-      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side) {
+      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol) {
         if (!panel.lastBarTime) return;
 
         const isFutures = isFuturesTicker(panel.symbol);
@@ -1246,13 +1246,19 @@
         const formattedSize = shareSize.toLocaleString('en-US');
         const formattedVal = dollarValue >= 1_000_000 ? `$${(dollarValue / 1_000_000).toFixed(2)}M` : `$${(dollarValue / 1000).toFixed(0)}k`;
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
+        // Present when a micro/standard sibling contract's trade is being
+        // shown under this panel's symbol - without this, per-contract
+        // dollar math looks inconsistent (a micro contract's multiplier
+        // is 1/10th the standard one, so far more contracts are needed
+        // for the same dollar value).
+        const viaStr = sourceSymbol ? ` (via ${sourceSymbol})` : '';
 
         const card = document.createElement('div');
         card.className = `flow-card stockflow ${isBuy ? 'call' : 'put'}`;
         card.innerHTML = `
           <div class="flow-details">
             <span class="flow-stockflow-tag">${tagLabel}</span>
-            <span class="flow-strike">${panel.symbol} ${formattedSize} ${unitLabel}</span>
+            <span class="flow-strike">${panel.symbol} ${formattedSize} ${unitLabel}${viaStr}</span>
             <span style="color: #8fa0be; font-size: 11px;">${isBuy ? 'BOUGHT' : 'SOLD'}${timeStr ? ' &middot; ' + timeStr : ''}</span>
           </div>
           <span class="flow-premium">${formattedVal}</span>
@@ -1273,7 +1279,7 @@
           position: isBuy ? 'belowBar' : 'aboveBar',
           color: '#9c27b0',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
-          text: `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedSize} ${unitLabel} (${formattedVal})`,
+          text: `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedSize} ${unitLabel}${viaStr} (${formattedVal})`,
           size: MARKER_SIZE,
         });
         if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
