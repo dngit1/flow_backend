@@ -616,22 +616,6 @@
     /* End-of-line MA labels - positioned at the line's current value and
        the latest bar's x-position, instead of Lightweight Charts' native
        label (which only renders in the fixed price-axis column). */
-    /* Generic end-of-line label for any user-added MA/EMA indicator -
-       background color set inline per-indicator via JS, since the set of
-       indicators (and their colors) is fully dynamic now. */
-    .indicator-end-label {
-      position: absolute;
-      transform: translateY(-50%);
-      z-index: 14;
-      padding: 1px 5px;
-      border-radius: 3px;
-      font-size: 10px;
-      font-weight: 700;
-      white-space: nowrap;
-      pointer-events: none;
-      color: #0b0e14;
-    }
-
     .wall-label {
       position: absolute;
       left: 50%;
@@ -738,6 +722,13 @@
               <option value="EMA">EMA</option>
             </select>
             <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+          </div>
+          <div class="indicator-add-row">
+            <select class="indicator-style-select">
+              <option value="0">Solid</option>
+              <option value="2">Dashed</option>
+              <option value="1">Dotted</option>
+            </select>
             <button class="indicator-add-btn">Add</button>
           </div>
           <div class="indicator-list">No indicators added</div>
@@ -760,7 +751,6 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
-        <div class="indicator-labels-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -797,6 +787,13 @@
               <option value="EMA">EMA</option>
             </select>
             <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+          </div>
+          <div class="indicator-add-row">
+            <select class="indicator-style-select">
+              <option value="0">Solid</option>
+              <option value="2">Dashed</option>
+              <option value="1">Dotted</option>
+            </select>
             <button class="indicator-add-btn">Add</button>
           </div>
           <div class="indicator-list">No indicators added</div>
@@ -819,7 +816,6 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
-        <div class="indicator-labels-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -956,11 +952,11 @@
         putWallLabel: root.querySelector('.put-wall-label'),
         highAreaLabel: root.querySelector('.high-area-label'),
         lowAreaLabel: root.querySelector('.low-area-label'),
-        indicatorLabelsContainer: root.querySelector('.indicator-labels-container'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
         indicatorPanel: root.querySelector('.indicator-panel'),
         indicatorTypeSelect: root.querySelector('.indicator-type-select'),
         indicatorPeriodInput: root.querySelector('.indicator-period-input'),
+        indicatorStyleSelect: root.querySelector('.indicator-style-select'),
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         indicatorList: root.querySelector('.indicator-list'),
       };
@@ -1018,7 +1014,7 @@
         candlestickSeries,
         volumeSeries,
         rsiSeries,
-        indicators: [], // [{id, type, period, color, series, currentValue, labelEl}] - fully user-managed
+        indicators: [], // [{id, type, period, color, series, currentValue}] - fully user-managed
         closeHistory: [],
         previousClose: null,
         bigFlowEnabled: true,
@@ -1294,7 +1290,6 @@
         panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
         panel.positionWallLabels();
-        panel.positionIndicatorLabels();
         panel.positionStrikeOverlay();
       };
 
@@ -1324,7 +1319,6 @@
 
       panel.recomputeAllIndicators = function () {
         panel.indicators.forEach((ind) => panel.recomputeIndicator(ind));
-        panel.positionIndicatorLabels();
       };
 
       panel.renderIndicatorList = function () {
@@ -1339,20 +1333,20 @@
           : 'No indicators added';
       };
 
-      panel.addIndicator = function (type, period) {
+      panel.addIndicator = function (type, period, lineStyle) {
         const id = `ind${indicatorIdCounter++}`;
         const color = INDICATOR_COLOR_PALETTE[panel.indicators.length % INDICATOR_COLOR_PALETTE.length];
-        const series = chart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        const labelEl = document.createElement('div');
-        labelEl.className = 'indicator-end-label';
-        labelEl.style.display = 'none';
-        labelEl.style.backgroundColor = color;
-        els.indicatorLabelsContainer.appendChild(labelEl);
+        const series = chart.addLineSeries({
+          color,
+          lineWidth: 1,
+          lineStyle,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
 
-        const indicator = { id, type, period, color, series, labelEl, currentValue: null };
+        const indicator = { id, type, period, color, series, currentValue: null };
         panel.indicators.push(indicator);
         panel.recomputeIndicator(indicator);
-        panel.positionIndicatorLabels();
         panel.renderIndicatorList();
       };
 
@@ -1361,31 +1355,8 @@
         if (idx === -1) return;
         const ind = panel.indicators[idx];
         chart.removeSeries(ind.series);
-        ind.labelEl.remove();
         panel.indicators.splice(idx, 1);
         panel.renderIndicatorList();
-      };
-
-      // Positions each indicator's end-of-line label at its current value
-      // (Y) and the latest bar's x-position (X) - same tracking approach
-      // as the wall labels, called on every tick/resize/pan-zoom.
-      panel.positionIndicatorLabels = function () {
-        const width = els.chartContainer.clientWidth || 0;
-        const height = els.chartContainer.clientHeight || 0;
-
-        panel.indicators.forEach((ind) => {
-          if (ind.currentValue == null || panel.lastBarTime == null) { ind.labelEl.style.display = 'none'; return; }
-          const x = chart.timeScale().timeToCoordinate(panel.lastBarTime);
-          const y = candlestickSeries.priceToCoordinate(ind.currentValue);
-          if (x == null || y == null || x < 0 || x > width || y < 0 || y > height) {
-            ind.labelEl.style.display = 'none';
-            return;
-          }
-          ind.labelEl.style.display = 'block';
-          ind.labelEl.style.left = `${x + 6}px`;
-          ind.labelEl.style.top = `${y}px`;
-          ind.labelEl.innerText = `${ind.type}${ind.period} ${ind.currentValue.toFixed(2)}`;
-        });
       };
 
       // Renders the always-visible per-strike overlay rows on the chart -
@@ -1688,7 +1659,7 @@
           candlestickSeries.setData([]);
           volumeSeries.setData([]);
           rsiSeries.setData([]);
-          panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; ind.labelEl.style.display = 'none'; });
+          panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; });
           panel.closeHistory = [];
           panel.symbol = previousSymbol;
           return;
@@ -1800,8 +1771,9 @@
       els.indicatorAddBtn.addEventListener('click', () => {
         const type = els.indicatorTypeSelect.value;
         const period = parseInt(els.indicatorPeriodInput.value, 10);
+        const lineStyle = parseInt(els.indicatorStyleSelect.value, 10);
         if (!period || period < 1) return;
-        panel.addIndicator(type, period);
+        panel.addIndicator(type, period, lineStyle);
       });
 
       // Remove buttons are created dynamically inside the list's
@@ -1812,14 +1784,14 @@
         if (btn) panel.removeIndicator(btn.dataset.id);
       });
 
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionIndicatorLabels(); });
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); });
 
       // Panning/zooming the chart shifts the auto-scaled price range (and
       // therefore the price->pixel mapping) just as much as a live tick
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionIndicatorLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); });
 
       return panel;
     }
