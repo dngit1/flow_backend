@@ -456,7 +456,6 @@
       transform: translateY(-50%);
       display: flex;
       align-items: center;
-      gap: 6px;
       font-size: 10px;
       white-space: nowrap;
     }
@@ -469,11 +468,13 @@
       width: 28px;
       text-align: right;
       color: #d1d4dc;
+      margin-right: 6px;
     }
 
     .strike-overlay-bar-track {
-      width: 70px;
-      height: 6px;
+      position: relative; /* anchor for the overlapping text below */
+      width: 150px;
+      height: 14px;
     }
 
     .strike-overlay-bar-fill {
@@ -488,7 +489,13 @@
     .strike-overlay-bar-put { height: 100%; background-color: #ff5252; }
 
     .strike-overlay-text {
-      color: #8fa0be;
+      position: absolute;
+      top: 50%;
+      left: 4px;
+      transform: translateY(-50%);
+      color: #ffffff;
+      text-shadow: 0 0 3px #000000, 0 0 3px #000000; /* keeps text legible over both the green and red bar segments */
+      z-index: 1;
     }
 
     .strike-overlay-call-pct { color: #00c853; }
@@ -513,12 +520,12 @@
 
     .wall-label.call-wall-label {
       background-color: transparent;
-      color: #ffffff;
+      color: #ff5252;
     }
 
     .wall-label.put-wall-label {
       background-color: transparent;
-      color: #ffffff;
+      color: #00c853;
     }
 
     .wall-label.high-area-label,
@@ -1127,11 +1134,13 @@
           const putSharePct = total > 0 ? (d.p / total) * 100 : 0;
           return `<div class="strike-overlay-row${d.isWallRow ? ' wall-row' : ''}" style="top:${y}px;">` +
             `<span class="strike-overlay-strike">${d.strike}</span>` +
-            `<div class="strike-overlay-bar-track"><div class="strike-overlay-bar-fill" style="width:${barWidthPct}%;">` +
+            `<div class="strike-overlay-bar-track">` +
+            `<div class="strike-overlay-bar-fill" style="width:${barWidthPct}%;">` +
             `<div class="strike-overlay-bar-call" style="width:${callSharePct}%;"></div>` +
             `<div class="strike-overlay-bar-put" style="width:${putSharePct}%;"></div>` +
-            `</div></div>` +
+            `</div>` +
             `<span class="strike-overlay-text">C:${fmtK(d.c)} <span class="strike-overlay-call-pct">(${d.cPct}%)</span> P:${fmtK(d.p)} <span class="strike-overlay-put-pct">(${d.pPct}%)</span></span>` +
+            `</div>` +
             `</div>`;
         }).join('');
       };
@@ -1206,20 +1215,37 @@
           for (const s of sortedStrikes) {
             totalVolumeByStrike.set(s, (callVolumeByStrike.get(s) || 0) + (putVolumeByStrike.get(s) || 0));
           }
-          // High Area / Low Area: the strike 7 positions above ATM, and 7
-          // positions below ATM (ATM = whichever strike is closest to the
-          // current price) - simpler and more predictable than a
-          // volume-expansion algorithm.
+          // High Area / Low Area: search up to 15 strikes above/below ATM
+          // (ATM = strike closest to current price), then find the
+          // FARTHEST-OUT strike on each side whose total volume still
+          // clears ~35% of the busiest strike's volume in that range -
+          // thin strikes beyond real activity get ignored, even if a
+          // low-volume strike sits between ATM and the real boundary.
+          // The 35% figure is a calibrated heuristic, not a universal
+          // formula - it may need tuning against more real examples.
           let atmIdx = 0;
           let bestDist = Infinity;
           sortedStrikes.forEach((s, i) => {
             const d = Math.abs(s - panel.lastBarPrice);
             if (d < bestDist) { bestDist = d; atmIdx = i; }
           });
-          const lowAreaIdx = Math.max(0, atmIdx - 7);
-          const highAreaIdx = Math.min(sortedStrikes.length - 1, atmIdx + 7);
-          const highArea = sortedStrikes[highAreaIdx];
-          const lowArea = sortedStrikes[lowAreaIdx];
+
+          const AREA_SEARCH_RADIUS = 15;
+          const AREA_VOLUME_THRESHOLD_PCT = 0.35;
+          const searchLowIdx = Math.max(0, atmIdx - AREA_SEARCH_RADIUS);
+          const searchHighIdx = Math.min(sortedStrikes.length - 1, atmIdx + AREA_SEARCH_RADIUS);
+          const candidateStrikes = sortedStrikes.slice(searchLowIdx, searchHighIdx + 1);
+          const maxVolInRange = Math.max(1, ...candidateStrikes.map((s) => totalVolumeByStrike.get(s) || 0));
+          const areaThreshold = maxVolInRange * AREA_VOLUME_THRESHOLD_PCT;
+
+          let highArea = sortedStrikes[atmIdx];
+          for (let i = searchHighIdx; i > atmIdx; i--) {
+            if ((totalVolumeByStrike.get(sortedStrikes[i]) || 0) >= areaThreshold) { highArea = sortedStrikes[i]; break; }
+          }
+          let lowArea = sortedStrikes[atmIdx];
+          for (let i = searchLowIdx; i < atmIdx; i++) {
+            if ((totalVolumeByStrike.get(sortedStrikes[i]) || 0) >= areaThreshold) { lowArea = sortedStrikes[i]; break; }
+          }
 
           const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
           const pctPair = (strike) => {
@@ -1265,24 +1291,22 @@
           if (callWall != null) {
             panel.callWallLine = candlestickSeries.createPriceLine({
               price: callWall,
-              color: '#00c853',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-            });
-            const { c, p, cPct, pPct } = pctPair(callWall);
-            els.callWallLabel.innerText = `CALL WALL ${callWall} — Call: ${fmt(c)} (${cPct}%), Put: ${fmt(p)} (${pPct}%)`;
-          }
-          if (putWall != null) {
-            panel.putWallLine = candlestickSeries.createPriceLine({
-              price: putWall,
               color: '#ff5252',
               lineWidth: 3,
               lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
             });
-            const { c, p, cPct, pPct } = pctPair(putWall);
-            els.putWallLabel.innerText = `PUT WALL ${putWall} — Call: ${fmt(c)} (${cPct}%), Put: ${fmt(p)} (${pPct}%)`;
+            els.callWallLabel.innerText = `Call Wall ${callWall}`;
+          }
+          if (putWall != null) {
+            panel.putWallLine = candlestickSeries.createPriceLine({
+              price: putWall,
+              color: '#00c853',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.putWallLabel.innerText = `Put Wall ${putWall}`;
           }
           panel.positionWallLabels();
 
