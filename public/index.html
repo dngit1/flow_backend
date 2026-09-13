@@ -409,6 +409,118 @@
       cursor: not-allowed;
     }
 
+    .indicator-toggle-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .indicator-toggle-btn:hover {
+      background-color: #364153;
+    }
+
+    .indicator-toggle-btn.active {
+      background-color: #7a5f00;
+      border-color: #a68100;
+    }
+
+    .indicator-wrap {
+      position: relative;
+      display: inline-block;
+    }
+
+    .indicator-panel {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 6px;
+      z-index: 50;
+      background-color: #131822;
+      border: 1px solid #1f293d;
+      border-radius: 8px;
+      padding: 10px;
+      min-width: 220px;
+    }
+
+    .indicator-panel.hidden {
+      display: none;
+    }
+
+    .indicator-add-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .indicator-type-select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px;
+    }
+
+    .indicator-period-input {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px;
+      width: 50px;
+    }
+
+    .indicator-add-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    .indicator-add-btn:hover {
+      background-color: #364153;
+    }
+
+    .indicator-list-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      font-size: 12px;
+    }
+
+    .indicator-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .indicator-list-label {
+      flex: 1;
+    }
+
+    .indicator-remove-btn {
+      background: none;
+      border: none;
+      color: #8fa0be;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+    }
+
+    .indicator-remove-btn:hover {
+      color: #ff5252;
+    }
+
     /* Big-flow entries (any expiration, not just the selected one) get a
        distinct gold border and an expiration-date line, so they're never
        confused with the normal single-expiration sidebar entries. */
@@ -498,8 +610,27 @@
       z-index: 1;
     }
 
-    .strike-overlay-call-pct { color: #00c853; }
-    .strike-overlay-put-pct { color: #ff5252; }
+    .strike-overlay-call-pct { color: #ffffff; }
+    .strike-overlay-put-pct { color: #ffffff; }
+
+    /* End-of-line MA labels - positioned at the line's current value and
+       the latest bar's x-position, instead of Lightweight Charts' native
+       label (which only renders in the fixed price-axis column). */
+    /* Generic end-of-line label for any user-added MA/EMA indicator -
+       background color set inline per-indicator via JS, since the set of
+       indicators (and their colors) is fully dynamic now. */
+    .indicator-end-label {
+      position: absolute;
+      transform: translateY(-50%);
+      z-index: 14;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+      color: #0b0e14;
+    }
 
     .wall-label {
       position: absolute;
@@ -598,6 +729,20 @@
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
+      <div class="indicator-wrap">
+        <button class="indicator-toggle-btn">Indicators</button>
+        <div class="indicator-panel hidden">
+          <div class="indicator-add-row">
+            <select class="indicator-type-select">
+              <option value="MA">MA</option>
+              <option value="EMA">EMA</option>
+            </select>
+            <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+            <button class="indicator-add-btn">Add</button>
+          </div>
+          <div class="indicator-list">No indicators added</div>
+        </div>
+      </div>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -615,6 +760,7 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
+        <div class="indicator-labels-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -642,6 +788,20 @@
         <option value="">Loading...</option>
       </select>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
+      <div class="indicator-wrap">
+        <button class="indicator-toggle-btn">Indicators</button>
+        <div class="indicator-panel hidden">
+          <div class="indicator-add-row">
+            <select class="indicator-type-select">
+              <option value="MA">MA</option>
+              <option value="EMA">EMA</option>
+            </select>
+            <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+            <button class="indicator-add-btn">Add</button>
+          </div>
+          <div class="indicator-list">No indicators added</div>
+        </div>
+      </div>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -659,6 +819,7 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
+        <div class="indicator-labels-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -726,6 +887,23 @@
       return points;
     }
 
+    // Standard EMA - seeded with a simple average of the first `period`
+    // closes, then smoothed forward from there.
+    function computeEMA(bars, period) {
+      if (bars.length < period) return [];
+      const points = [];
+      const multiplier = 2 / (period + 1);
+      let sum = 0;
+      for (let i = 0; i < period; i++) sum += bars[i].close;
+      let ema = sum / period;
+      points.push({ time: bars[period - 1].time, value: ema });
+      for (let i = period; i < bars.length; i++) {
+        ema = (bars[i].close - ema) * multiplier + ema;
+        points.push({ time: bars[i].time, value: ema });
+      }
+      return points;
+    }
+
     // Standard Wilder's-smoothing RSI (same method used by virtually every
     // charting platform) - needs `period` bars just to seed the first
     // average, so the line starts partway into the visible history, same
@@ -778,6 +956,13 @@
         putWallLabel: root.querySelector('.put-wall-label'),
         highAreaLabel: root.querySelector('.high-area-label'),
         lowAreaLabel: root.querySelector('.low-area-label'),
+        indicatorLabelsContainer: root.querySelector('.indicator-labels-container'),
+        indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
+        indicatorPanel: root.querySelector('.indicator-panel'),
+        indicatorTypeSelect: root.querySelector('.indicator-type-select'),
+        indicatorPeriodInput: root.querySelector('.indicator-period-input'),
+        indicatorAddBtn: root.querySelector('.indicator-add-btn'),
+        indicatorList: root.querySelector('.indicator-list'),
       };
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
@@ -822,8 +1007,6 @@
       rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
       rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
 
-      const ma9Series = chart.addLineSeries({ color: '#ffeb3b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA8', lineType: 1 });
-      const ma20Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'MA20' });
 
       const panel = {
         index,
@@ -835,8 +1018,7 @@
         candlestickSeries,
         volumeSeries,
         rsiSeries,
-        ma9Series,
-        ma20Series,
+        indicators: [], // [{id, type, period, color, series, currentValue, labelEl}] - fully user-managed
         closeHistory: [],
         previousClose: null,
         bigFlowEnabled: true,
@@ -1087,14 +1269,24 @@
         }
 
         const hist = panel.closeHistory;
-        function updateMA(series, period) {
-          if (hist.length < period) return;
-          let sum = 0;
-          for (let i = hist.length - period; i < hist.length; i++) sum += hist[i].close;
-          series.update({ time: panel.lastBarTime, value: sum / period });
-        }
-        updateMA(ma9Series, 8);
-        updateMA(ma20Series, 20);
+        // Live-update every user-added indicator. MA can update
+        // incrementally from the tail of history; EMA is inherently
+        // sequential/cumulative, so it's recomputed fully each tick
+        // (same approach RSI already uses) - cheap given the small
+        // array size, and avoids subtle incremental-state bugs.
+        panel.indicators.forEach((ind) => {
+          if (ind.type === 'EMA') {
+            const points = computeEMA(hist, ind.period);
+            ind.series.setData(points);
+            ind.currentValue = points.length ? points[points.length - 1].value : null;
+          } else {
+            if (hist.length < ind.period) { ind.currentValue = null; return; }
+            let sum = 0;
+            for (let i = hist.length - ind.period; i < hist.length; i++) sum += hist[i].close;
+            ind.currentValue = sum / ind.period;
+            ind.series.update({ time: panel.lastBarTime, value: ind.currentValue });
+          }
+        });
         rsiSeries.setData(computeRSI(hist, RSI_PERIOD));
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
@@ -1102,6 +1294,7 @@
         panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
         panel.positionWallLabels();
+        panel.positionIndicatorLabels();
         panel.positionStrikeOverlay();
       };
 
@@ -1115,6 +1308,85 @@
       panel.lowAreaPrice = null;
       panel.wallRefreshTimer = null;
       panel.strikeOverlayData = []; // [{strike, c, p, cPct, pPct, isWallRow}] - rendered by positionStrikeOverlay
+
+      let indicatorIdCounter = 0;
+      const INDICATOR_COLOR_PALETTE = ['#ffeb3b', '#2196f3', '#e91e63', '#00bcd4', '#ff9800', '#9c27b0', '#4caf50', '#f44336'];
+
+      panel.computeIndicatorPoints = function (indicator) {
+        return indicator.type === 'EMA' ? computeEMA(panel.closeHistory, indicator.period) : computeMA(panel.closeHistory, indicator.period);
+      };
+
+      panel.recomputeIndicator = function (indicator) {
+        const points = panel.computeIndicatorPoints(indicator);
+        indicator.series.setData(points);
+        indicator.currentValue = points.length ? points[points.length - 1].value : null;
+      };
+
+      panel.recomputeAllIndicators = function () {
+        panel.indicators.forEach((ind) => panel.recomputeIndicator(ind));
+        panel.positionIndicatorLabels();
+      };
+
+      panel.renderIndicatorList = function () {
+        els.indicatorList.innerHTML = panel.indicators.length
+          ? panel.indicators.map((ind) => (
+              `<div class="indicator-list-row">` +
+              `<span class="indicator-swatch" style="background-color:${ind.color};"></span>` +
+              `<span class="indicator-list-label">${ind.type}${ind.period}</span>` +
+              `<button class="indicator-remove-btn" data-id="${ind.id}">&times;</button>` +
+              `</div>`
+            )).join('')
+          : 'No indicators added';
+      };
+
+      panel.addIndicator = function (type, period) {
+        const id = `ind${indicatorIdCounter++}`;
+        const color = INDICATOR_COLOR_PALETTE[panel.indicators.length % INDICATOR_COLOR_PALETTE.length];
+        const series = chart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        const labelEl = document.createElement('div');
+        labelEl.className = 'indicator-end-label';
+        labelEl.style.display = 'none';
+        labelEl.style.backgroundColor = color;
+        els.indicatorLabelsContainer.appendChild(labelEl);
+
+        const indicator = { id, type, period, color, series, labelEl, currentValue: null };
+        panel.indicators.push(indicator);
+        panel.recomputeIndicator(indicator);
+        panel.positionIndicatorLabels();
+        panel.renderIndicatorList();
+      };
+
+      panel.removeIndicator = function (id) {
+        const idx = panel.indicators.findIndex((ind) => ind.id === id);
+        if (idx === -1) return;
+        const ind = panel.indicators[idx];
+        chart.removeSeries(ind.series);
+        ind.labelEl.remove();
+        panel.indicators.splice(idx, 1);
+        panel.renderIndicatorList();
+      };
+
+      // Positions each indicator's end-of-line label at its current value
+      // (Y) and the latest bar's x-position (X) - same tracking approach
+      // as the wall labels, called on every tick/resize/pan-zoom.
+      panel.positionIndicatorLabels = function () {
+        const width = els.chartContainer.clientWidth || 0;
+        const height = els.chartContainer.clientHeight || 0;
+
+        panel.indicators.forEach((ind) => {
+          if (ind.currentValue == null || panel.lastBarTime == null) { ind.labelEl.style.display = 'none'; return; }
+          const x = chart.timeScale().timeToCoordinate(panel.lastBarTime);
+          const y = candlestickSeries.priceToCoordinate(ind.currentValue);
+          if (x == null || y == null || x < 0 || x > width || y < 0 || y > height) {
+            ind.labelEl.style.display = 'none';
+            return;
+          }
+          ind.labelEl.style.display = 'block';
+          ind.labelEl.style.left = `${x + 6}px`;
+          ind.labelEl.style.top = `${y}px`;
+          ind.labelEl.innerText = `${ind.type}${ind.period} ${ind.currentValue.toFixed(2)}`;
+        });
+      };
 
       // Renders the always-visible per-strike overlay rows on the chart -
       // called after every data refresh AND whenever the price->pixel
@@ -1416,8 +1688,7 @@
           candlestickSeries.setData([]);
           volumeSeries.setData([]);
           rsiSeries.setData([]);
-          ma9Series.setData([]);
-          ma20Series.setData([]);
+          panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; ind.labelEl.style.display = 'none'; });
           panel.closeHistory = [];
           panel.symbol = previousSymbol;
           return;
@@ -1432,8 +1703,10 @@
           })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
           rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
-          ma9Series.setData(computeMA(seedCandles, 8));
-          ma20Series.setData(computeMA(seedCandles, 20));
+          // Recompute whatever indicators the user has added, against
+          // this (possibly new) symbol's fresh data - the user's chosen
+          // set persists across ticker switches, just recalculated.
+          panel.recomputeAllIndicators();
           panel.centerLastCandle();
           console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
         } catch (renderErr) {
@@ -1519,14 +1792,34 @@
         }
       });
 
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); });
+      els.indicatorToggleBtn.addEventListener('click', () => {
+        els.indicatorPanel.classList.toggle('hidden');
+        els.indicatorToggleBtn.classList.toggle('active', !els.indicatorPanel.classList.contains('hidden'));
+      });
+
+      els.indicatorAddBtn.addEventListener('click', () => {
+        const type = els.indicatorTypeSelect.value;
+        const period = parseInt(els.indicatorPeriodInput.value, 10);
+        if (!period || period < 1) return;
+        panel.addIndicator(type, period);
+      });
+
+      // Remove buttons are created dynamically inside the list's
+      // innerHTML, so a single delegated listener on the list container
+      // catches clicks on any of them, present or future.
+      els.indicatorList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.indicator-remove-btn');
+        if (btn) panel.removeIndicator(btn.dataset.id);
+      });
+
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionIndicatorLabels(); });
 
       // Panning/zooming the chart shifts the auto-scaled price range (and
       // therefore the price->pixel mapping) just as much as a live tick
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionIndicatorLabels(); });
 
       return panel;
     }
