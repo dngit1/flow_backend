@@ -162,7 +162,7 @@
     }
 
     .toolbar {
-      position: relative; /* anchor for the volwall-panel dropdown */
+      position: relative; /* positioning context for toolbar children if needed */
       display: flex;
       align-items: center;
       gap: 12px;
@@ -436,93 +436,47 @@
       letter-spacing: 0.3px;
     }
 
-    .volwall-toggle-btn {
-      background-color: #2b3548;
-      color: #ffffff;
-      border: 1px solid #364153;
-      padding: 7px 10px;
-      border-radius: 6px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-
-    .volwall-toggle-btn:hover {
-      background-color: #364153;
-    }
-
-    .volwall-toggle-btn.active {
-      background-color: #7a5f00;
-      border-color: #a68100;
-    }
-
-    .volwall-wrap {
-      position: relative; /* anchor for the panel below - independent of toolbar wrapping */
-      display: inline-block;
-    }
-
-    .volwall-panel {
+    /* Always-visible on-chart per-strike overlay - one absolutely
+       positioned row per strike, right-anchored near the price axis,
+       vertically placed at that strike's actual price level. Replaces
+       the old click-to-open "Vol by Strike" dropdown panel. */
+    .strike-overlay-container {
       position: absolute;
-      top: 100%;
+      top: 0;
+      left: 0;
       right: 0;
-      margin-top: 6px;
-      z-index: 50;
-      background-color: #131822;
-      border: 1px solid #1f293d;
-      border-radius: 8px;
-      padding: 10px;
-      min-width: 230px;
-      max-height: 360px;
-      overflow-y: auto;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 12;
     }
 
-    .volwall-panel.hidden {
-      display: none;
-    }
-
-    .volwall-header, .volwall-row {
+    .strike-overlay-row {
+      position: absolute;
+      right: 62px; /* clears the native price axis labels */
+      transform: translateY(-50%);
       display: flex;
-      align-items: baseline;
-      gap: 8px;
-      padding: 3px 4px;
-      font-size: 12px;
-    }
-
-    .volwall-header {
-      border-bottom: 1px solid #1f293d;
-      margin-bottom: 4px;
+      align-items: center;
+      gap: 6px;
       font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #8fa0be;
+      white-space: nowrap;
     }
 
-    .volwall-strike-col {
-      width: 40px;
-      flex-shrink: 0;
+    .strike-overlay-row.wall-row {
       font-weight: 700;
     }
 
-    .volwall-call-col, .volwall-put-col {
-      flex: 1;
+    .strike-overlay-strike {
+      width: 28px;
+      text-align: right;
+      color: #d1d4dc;
     }
 
-    .volwall-row.pivot-row {
-      background-color: #2b2408;
-      border-radius: 4px;
-    }
-
-    .volwall-call-pct { color: #00c853; }
-    .volwall-put-pct { color: #ff5252; }
-
-    .volwall-bar-track {
-      width: 100%;
+    .strike-overlay-bar-track {
+      width: 70px;
       height: 6px;
-      margin: 2px 0 6px 0;
-      padding: 0 4px;
-      box-sizing: border-box;
     }
 
-    .volwall-bar-fill {
+    .strike-overlay-bar-fill {
       height: 100%;
       display: flex;
       border-radius: 2px;
@@ -530,15 +484,15 @@
       min-width: 2px; /* so a strike with tiny volume still shows a sliver, not nothing */
     }
 
-    .volwall-bar-call {
-      height: 100%;
-      background-color: #00c853;
+    .strike-overlay-bar-call { height: 100%; background-color: #00c853; }
+    .strike-overlay-bar-put { height: 100%; background-color: #ff5252; }
+
+    .strike-overlay-text {
+      color: #8fa0be;
     }
 
-    .volwall-bar-put {
-      height: 100%;
-      background-color: #ff5252;
-    }
+    .strike-overlay-call-pct { color: #00c853; }
+    .strike-overlay-put-pct { color: #ff5252; }
 
     .wall-label {
       position: absolute;
@@ -630,22 +584,12 @@
         <option value="15min">15m</option>
         <option value="30min">30m</option>
         <option value="1h">1H</option>
+        <option value="1day">1D</option>
       </select>
       <label><strong>EXP:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <div class="volwall-wrap">
-        <button class="volwall-toggle-btn">Vol by Strike</button>
-        <div class="volwall-panel hidden">
-          <div class="volwall-header">
-            <span class="volwall-strike-col"></span>
-            <span class="volwall-call-col">Calls</span>
-            <span class="volwall-put-col">Puts</span>
-          </div>
-          <div class="volwall-list">Loading...</div>
-        </div>
-      </div>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
     </div>
     <div class="main-layout">
@@ -663,6 +607,7 @@
         <div class="wall-label put-wall-label" style="display:none;"></div>
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
+        <div class="strike-overlay-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -683,22 +628,12 @@
         <option value="15min">15m</option>
         <option value="30min">30m</option>
         <option value="1h">1H</option>
+        <option value="1day">1D</option>
       </select>
       <label><strong>EXP:</strong></label>
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <div class="volwall-wrap">
-        <button class="volwall-toggle-btn">Vol by Strike</button>
-        <div class="volwall-panel hidden">
-          <div class="volwall-header">
-            <span class="volwall-strike-col"></span>
-            <span class="volwall-call-col">Calls</span>
-            <span class="volwall-put-col">Puts</span>
-          </div>
-          <div class="volwall-list">Loading...</div>
-        </div>
-      </div>
       <button class="bigflow-toggle-btn active">Big Flow: On</button>
     </div>
     <div class="main-layout">
@@ -716,6 +651,7 @@
         <div class="wall-label put-wall-label" style="display:none;"></div>
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
+        <div class="strike-overlay-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -814,49 +750,6 @@
       return points;
     }
 
-    // Standard "Value Area" algorithm from Volume Profile analysis,
-    // adapted from price/time volume to per-strike option volume. Starts
-    // at the highest-volume strike (the "Point of Control") and expands
-    // outward one strike at a time - always taking whichever side (above
-    // or below) has more volume next - until the accumulated volume
-    // reaches targetPct of the total. The two outer edges of that
-    // expanded zone are the High Area / Low Area.
-    function computeValueArea(sortedStrikes, totalVolByStrike, targetPct) {
-      if (sortedStrikes.length === 0) return { high: null, low: null };
-
-      let pocIdx = 0;
-      let pocVol = -1;
-      sortedStrikes.forEach((s, i) => {
-        const v = totalVolByStrike.get(s) || 0;
-        if (v > pocVol) { pocVol = v; pocIdx = i; }
-      });
-
-      const grandTotal = sortedStrikes.reduce((sum, s) => sum + (totalVolByStrike.get(s) || 0), 0);
-      if (grandTotal === 0) return { high: null, low: null };
-
-      let lowIdx = pocIdx;
-      let highIdx = pocIdx;
-      let cum = totalVolByStrike.get(sortedStrikes[pocIdx]) || 0;
-      const target = grandTotal * targetPct;
-
-      while (cum < target && (lowIdx > 0 || highIdx < sortedStrikes.length - 1)) {
-        const belowVol = lowIdx > 0 ? (totalVolByStrike.get(sortedStrikes[lowIdx - 1]) || 0) : -1;
-        const aboveVol = highIdx < sortedStrikes.length - 1 ? (totalVolByStrike.get(sortedStrikes[highIdx + 1]) || 0) : -1;
-
-        if (aboveVol >= belowVol && highIdx < sortedStrikes.length - 1) {
-          highIdx++;
-          cum += totalVolByStrike.get(sortedStrikes[highIdx]) || 0;
-        } else if (lowIdx > 0) {
-          lowIdx--;
-          cum += totalVolByStrike.get(sortedStrikes[lowIdx]) || 0;
-        } else {
-          break;
-        }
-      }
-
-      return { high: sortedStrikes[highIdx], low: sortedStrikes[lowIdx] };
-    }
-
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
       const els = {
@@ -873,9 +766,7 @@
         chartErrorBanner: root.querySelector('.chart-error-banner'),
         flowList: root.querySelector('.flow-list'),
         bigflowToggleBtn: root.querySelector('.bigflow-toggle-btn'),
-        volwallToggleBtn: root.querySelector('.volwall-toggle-btn'),
-        volwallPanel: root.querySelector('.volwall-panel'),
-        volwallList: root.querySelector('.volwall-list'),
+        strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         callWallLabel: root.querySelector('.call-wall-label'),
         putWallLabel: root.querySelector('.put-wall-label'),
         highAreaLabel: root.querySelector('.high-area-label'),
@@ -1204,6 +1095,7 @@
         panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
         panel.positionWallLabels();
+        panel.positionStrikeOverlay();
       };
 
       panel.callWallLine = null;
@@ -1215,6 +1107,34 @@
       panel.highAreaPrice = null;
       panel.lowAreaPrice = null;
       panel.wallRefreshTimer = null;
+      panel.strikeOverlayData = []; // [{strike, c, p, cPct, pPct, isWallRow}] - rendered by positionStrikeOverlay
+
+      // Renders the always-visible per-strike overlay rows on the chart -
+      // called after every data refresh AND whenever the price->pixel
+      // mapping might have shifted (ticks, resize, pan/zoom), same
+      // tracking approach as the wall labels.
+      panel.positionStrikeOverlay = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const fmtK = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
+        const maxTotal = Math.max(1, ...panel.strikeOverlayData.map((d) => d.c + d.p));
+
+        els.strikeOverlayContainer.innerHTML = panel.strikeOverlayData.map((d) => {
+          const y = candlestickSeries.priceToCoordinate(d.strike);
+          if (y == null || y < 0 || y > height) return '';
+          const total = d.c + d.p;
+          const barWidthPct = (total / maxTotal) * 100;
+          const callSharePct = total > 0 ? (d.c / total) * 100 : 0;
+          const putSharePct = total > 0 ? (d.p / total) * 100 : 0;
+          return `<div class="strike-overlay-row${d.isWallRow ? ' wall-row' : ''}" style="top:${y}px;">` +
+            `<span class="strike-overlay-strike">${d.strike}</span>` +
+            `<div class="strike-overlay-bar-track"><div class="strike-overlay-bar-fill" style="width:${barWidthPct}%;">` +
+            `<div class="strike-overlay-bar-call" style="width:${callSharePct}%;"></div>` +
+            `<div class="strike-overlay-bar-put" style="width:${putSharePct}%;"></div>` +
+            `</div></div>` +
+            `<span class="strike-overlay-text">C:${fmtK(d.c)} <span class="strike-overlay-call-pct">(${d.cPct}%)</span> P:${fmtK(d.p)} <span class="strike-overlay-put-pct">(${d.pPct}%)</span></span>` +
+            `</div>`;
+        }).join('');
+      };
 
       // Computes the "Call Wall" (strike with the most total call volume
       // today) and "Put Wall" (same, for puts) from Tradier's full option
@@ -1286,7 +1206,20 @@
           for (const s of sortedStrikes) {
             totalVolumeByStrike.set(s, (callVolumeByStrike.get(s) || 0) + (putVolumeByStrike.get(s) || 0));
           }
-          const { high: highArea, low: lowArea } = computeValueArea(sortedStrikes, totalVolumeByStrike, 0.70);
+          // High Area / Low Area: the strike 7 positions above ATM, and 7
+          // positions below ATM (ATM = whichever strike is closest to the
+          // current price) - simpler and more predictable than a
+          // volume-expansion algorithm.
+          let atmIdx = 0;
+          let bestDist = Infinity;
+          sortedStrikes.forEach((s, i) => {
+            const d = Math.abs(s - panel.lastBarPrice);
+            if (d < bestDist) { bestDist = d; atmIdx = i; }
+          });
+          const lowAreaIdx = Math.max(0, atmIdx - 7);
+          const highAreaIdx = Math.min(sortedStrikes.length - 1, atmIdx + 7);
+          const highArea = sortedStrikes[highAreaIdx];
+          const lowArea = sortedStrikes[lowAreaIdx];
 
           const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
           const pctPair = (strike) => {
@@ -1353,42 +1286,24 @@
           }
           panel.positionWallLabels();
 
-          // Per-strike breakdown list - spans the computed Value Area
-          // (Low Area to High Area), same range the two blue lines mark.
+          // Strike range for the overlay - Low Area to High Area, the
+          // same range the two blue lines mark (now the ATM±7 window).
           let nearby = sortedStrikes;
           if (highArea != null && lowArea != null) {
             const lowIdx = sortedStrikes.indexOf(lowArea);
             const highIdx = sortedStrikes.indexOf(highArea);
             nearby = sortedStrikes.slice(lowIdx, highIdx + 1);
           }
-          nearby = nearby.slice().sort((a, b) => b - a); // display highest strike first, like the reference image
 
-          const maxTotalInRange = Math.max(1, ...nearby.map((s) => totalVolumeByStrike.get(s) || 0));
-
-          els.volwallList.innerHTML = nearby.map((strike) => {
+          panel.strikeOverlayData = nearby.map((strike) => {
             const { c, p, cPct, pPct } = pctPair(strike);
-            const isWallRow = strike === callWall || strike === putWall;
-            const total = c + p;
-            // This strike's bar length relative to the busiest strike in
-            // the visible range - the call/put split within that bar
-            // uses each side's actual share of THIS strike's volume.
-            const barWidthPct = (total / maxTotalInRange) * 100;
-            const callSharePct = total > 0 ? (c / total) * 100 : 0;
-            const putSharePct = total > 0 ? (p / total) * 100 : 0;
-            return `<div class="volwall-row${isWallRow ? ' pivot-row' : ''}">` +
-              `<span class="volwall-strike-col">${strike}</span>` +
-              `<span class="volwall-call-col">C:${fmt(c)} <span class="volwall-call-pct">(${cPct}%)</span></span>` +
-              `<span class="volwall-put-col">P:${fmt(p)} <span class="volwall-put-pct">(${pPct}%)</span></span>` +
-              `</div>` +
-              `<div class="volwall-bar-track">` +
-              `<div class="volwall-bar-fill" style="width:${barWidthPct}%;">` +
-              `<div class="volwall-bar-call" style="width:${callSharePct}%;"></div>` +
-              `<div class="volwall-bar-put" style="width:${putSharePct}%;"></div>` +
-              `</div></div>`;
-          }).join('') || 'No volume data yet';
+            return { strike, c, p, cPct, pPct, isWallRow: strike === callWall || strike === putWall };
+          });
+          panel.positionStrikeOverlay();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
-          els.volwallList.innerText = 'Failed to load';
+          panel.strikeOverlayData = [];
+          els.strikeOverlayContainer.innerHTML = '';
         }
       };
 
@@ -1451,6 +1366,8 @@
         els.putWallLabel.style.display = 'none';
         els.highAreaLabel.style.display = 'none';
         els.lowAreaLabel.style.display = 'none';
+        panel.strikeOverlayData = [];
+        els.strikeOverlayContainer.innerHTML = '';
 
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
@@ -1552,7 +1469,7 @@
         if (e.key === 'Enter') els.searchBtn.click();
       });
       els.timeframeSelect.addEventListener('change', (e) => {
-        const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600 };
+        const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
         panel.interval = e.target.value;
         panel.intervalSeconds = INTERVAL_SECONDS[panel.interval] || 60;
         // Full reload at the new timeframe - same symbol, but candles,
@@ -1578,19 +1495,14 @@
         }
       });
 
-      els.volwallToggleBtn.addEventListener('click', () => {
-        els.volwallPanel.classList.toggle('hidden');
-        els.volwallToggleBtn.classList.toggle('active', !els.volwallPanel.classList.contains('hidden'));
-      });
-
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); });
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); });
 
       // Panning/zooming the chart shifts the auto-scaled price range (and
       // therefore the price->pixel mapping) just as much as a live tick
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => panel.positionWallLabels());
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); });
 
       return panel;
     }
