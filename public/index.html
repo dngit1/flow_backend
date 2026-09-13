@@ -725,9 +725,10 @@
           </div>
           <div class="indicator-add-row">
             <select class="indicator-style-select">
-              <option value="0">Solid</option>
-              <option value="2">Dashed</option>
-              <option value="1">Dotted</option>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="step">Step</option>
             </select>
             <button class="indicator-add-btn">Add</button>
           </div>
@@ -790,9 +791,10 @@
           </div>
           <div class="indicator-add-row">
             <select class="indicator-style-select">
-              <option value="0">Solid</option>
-              <option value="2">Dashed</option>
-              <option value="1">Dotted</option>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="step">Step</option>
             </select>
             <button class="indicator-add-btn">Add</button>
           </div>
@@ -1333,13 +1335,14 @@
           : 'No indicators added';
       };
 
-      panel.addIndicator = function (type, period, lineStyle) {
+      panel.addIndicator = function (type, period, lineStyle, lineType) {
         const id = `ind${indicatorIdCounter++}`;
         const color = INDICATOR_COLOR_PALETTE[panel.indicators.length % INDICATOR_COLOR_PALETTE.length];
         const series = chart.addLineSeries({
           color,
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle,
+          lineType,
           priceLineVisible: false,
           lastValueVisible: false,
         });
@@ -1771,9 +1774,20 @@
       els.indicatorAddBtn.addEventListener('click', () => {
         const type = els.indicatorTypeSelect.value;
         const period = parseInt(els.indicatorPeriodInput.value, 10);
-        const lineStyle = parseInt(els.indicatorStyleSelect.value, 10);
         if (!period || period < 1) return;
-        panel.addIndicator(type, period, lineStyle);
+
+        // "Step" is a different Lightweight Charts property (lineType)
+        // than the dash pattern options (lineStyle) - map the single
+        // dropdown choice to whichever combination it actually needs.
+        const STYLE_MAP = {
+          solid: { lineStyle: 0, lineType: 0 },
+          dashed: { lineStyle: 2, lineType: 0 },
+          dotted: { lineStyle: 1, lineType: 0 },
+          step: { lineStyle: 0, lineType: 1 },
+        };
+        const { lineStyle, lineType } = STYLE_MAP[els.indicatorStyleSelect.value] || STYLE_MAP.solid;
+
+        panel.addIndicator(type, period, lineStyle, lineType);
       });
 
       // Remove buttons are created dynamically inside the list's
