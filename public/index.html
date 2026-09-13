@@ -674,6 +674,14 @@
       <option value="1000000">$1M+</option>
     </select>
 
+    <label><strong>Futures Min Chart Marker:</strong></label>
+    <select id="futures-marker-floor-select">
+      <option value="2000000">$2M+</option>
+      <option value="4000000" selected>$4M+</option>
+      <option value="6000000">$6M+</option>
+      <option value="10000000">$10M+</option>
+    </select>
+
     <button id="leaderboard-btn" class="leaderboard-btn">Premium Leaderboard</button>
     <div id="leaderboard-panel" class="leaderboard-panel hidden">
       <h4>Top Option Premium Today</h4>
@@ -834,6 +842,7 @@
 
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
+    let FUTURES_CHART_MARKER_FLOOR = 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $2M threshold, this only controls what gets a chart arrow
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
@@ -865,10 +874,24 @@
       return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
     }
 
+    // Always Eastern Time (market/exchange time) regardless of the
+    // viewer's own location - a trader in any timezone still sees the
+    // same clock time everyone else trading US markets sees.
     function formatTradeTime(timestampMs) {
       return new Date(timestampMs).toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit', second: '2-digit',
+        hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York',
       });
+    }
+
+    // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds -
+    // year/month/day ticks should show a date, not a time, particularly
+    // relevant now that the 1-day timeframe spans many calendar days.
+    function formatChartEasternTime(unixSeconds, tickMarkType) {
+      const d = new Date(unixSeconds * 1000);
+      if (tickMarkType != null && tickMarkType <= 2) {
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+      }
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
     }
 
     function isFuturesTicker(symbol) {
@@ -967,7 +990,15 @@
         autoSize: true,
         layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
-        timeScale: { timeVisible: true, secondsVisible: false, barSpacing: 8 },
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          barSpacing: 8,
+          tickMarkFormatter: (time, tickMarkType) => formatChartEasternTime(time, tickMarkType),
+        },
+        localization: {
+          timeFormatter: (time) => formatChartEasternTime(time),
+        },
         // Three vertical bands sharing this one chart: price (top ~65%),
         // volume (middle band), RSI (bottom-most band).
         rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.30 } },
@@ -1228,6 +1259,14 @@
         `;
         els.flowList.prepend(card);
         if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+
+        // Futures large-trades get their own, higher, separately-adjustable
+        // chart-marker floor - the sidebar still shows everything the
+        // server already decided was worth broadcasting ($2M+), but the
+        // chart itself only gets an arrow above this floor, to avoid the
+        // crowding that comes from combining ES/MES (or NQ/MNQ) flow into
+        // one busy panel.
+        if (isFutures && dollarValue < FUTURES_CHART_MARKER_FLOOR) return;
 
         panel.flowMarkers.push({
           time: panel.lastBarTime,
@@ -1837,6 +1876,10 @@
 
     document.getElementById('marker-floor-select').addEventListener('change', (e) => {
       CHART_MARKER_PREMIUM_FLOOR = parseInt(e.target.value, 10);
+    });
+
+    document.getElementById('futures-marker-floor-select').addEventListener('change', (e) => {
+      FUTURES_CHART_MARKER_FLOOR = parseInt(e.target.value, 10);
     });
 
     function formatPremiumTotal(n) {
