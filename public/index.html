@@ -514,6 +514,32 @@
     .volwall-call-pct { color: #00c853; }
     .volwall-put-pct { color: #ff5252; }
 
+    .volwall-bar-track {
+      width: 100%;
+      height: 6px;
+      margin: 2px 0 6px 0;
+      padding: 0 4px;
+      box-sizing: border-box;
+    }
+
+    .volwall-bar-fill {
+      height: 100%;
+      display: flex;
+      border-radius: 2px;
+      overflow: hidden;
+      min-width: 2px; /* so a strike with tiny volume still shows a sliver, not nothing */
+    }
+
+    .volwall-bar-call {
+      height: 100%;
+      background-color: #00c853;
+    }
+
+    .volwall-bar-put {
+      height: 100%;
+      background-color: #ff5252;
+    }
+
     .wall-label {
       position: absolute;
       left: 50%;
@@ -539,6 +565,12 @@
     .wall-label.put-wall-label {
       background-color: transparent;
       color: #ffffff;
+    }
+
+    .wall-label.high-area-label,
+    .wall-label.low-area-label {
+      background-color: transparent;
+      color: #42a5f5;
     }
   </style>
 
@@ -629,6 +661,8 @@
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -680,6 +714,8 @@
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Option Sweeps</div>
@@ -778,6 +814,49 @@
       return points;
     }
 
+    // Standard "Value Area" algorithm from Volume Profile analysis,
+    // adapted from price/time volume to per-strike option volume. Starts
+    // at the highest-volume strike (the "Point of Control") and expands
+    // outward one strike at a time - always taking whichever side (above
+    // or below) has more volume next - until the accumulated volume
+    // reaches targetPct of the total. The two outer edges of that
+    // expanded zone are the High Area / Low Area.
+    function computeValueArea(sortedStrikes, totalVolByStrike, targetPct) {
+      if (sortedStrikes.length === 0) return { high: null, low: null };
+
+      let pocIdx = 0;
+      let pocVol = -1;
+      sortedStrikes.forEach((s, i) => {
+        const v = totalVolByStrike.get(s) || 0;
+        if (v > pocVol) { pocVol = v; pocIdx = i; }
+      });
+
+      const grandTotal = sortedStrikes.reduce((sum, s) => sum + (totalVolByStrike.get(s) || 0), 0);
+      if (grandTotal === 0) return { high: null, low: null };
+
+      let lowIdx = pocIdx;
+      let highIdx = pocIdx;
+      let cum = totalVolByStrike.get(sortedStrikes[pocIdx]) || 0;
+      const target = grandTotal * targetPct;
+
+      while (cum < target && (lowIdx > 0 || highIdx < sortedStrikes.length - 1)) {
+        const belowVol = lowIdx > 0 ? (totalVolByStrike.get(sortedStrikes[lowIdx - 1]) || 0) : -1;
+        const aboveVol = highIdx < sortedStrikes.length - 1 ? (totalVolByStrike.get(sortedStrikes[highIdx + 1]) || 0) : -1;
+
+        if (aboveVol >= belowVol && highIdx < sortedStrikes.length - 1) {
+          highIdx++;
+          cum += totalVolByStrike.get(sortedStrikes[highIdx]) || 0;
+        } else if (lowIdx > 0) {
+          lowIdx--;
+          cum += totalVolByStrike.get(sortedStrikes[lowIdx]) || 0;
+        } else {
+          break;
+        }
+      }
+
+      return { high: sortedStrikes[highIdx], low: sortedStrikes[lowIdx] };
+    }
+
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
       const els = {
@@ -799,6 +878,8 @@
         volwallList: root.querySelector('.volwall-list'),
         callWallLabel: root.querySelector('.call-wall-label'),
         putWallLabel: root.querySelector('.put-wall-label'),
+        highAreaLabel: root.querySelector('.high-area-label'),
+        lowAreaLabel: root.querySelector('.low-area-label'),
       };
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
@@ -1129,6 +1210,10 @@
       panel.putWallLine = null;
       panel.callWallPrice = null;
       panel.putWallPrice = null;
+      panel.highAreaLine = null;
+      panel.lowAreaLine = null;
+      panel.highAreaPrice = null;
+      panel.lowAreaPrice = null;
       panel.wallRefreshTimer = null;
 
       // Computes the "Call Wall" (strike with the most total call volume
@@ -1144,33 +1229,26 @@
         const height = els.chartContainer.clientHeight || 0;
         const sameStrike = panel.callWallPrice != null && panel.putWallPrice != null && panel.callWallPrice === panel.putWallPrice;
 
-        if (panel.callWallPrice != null) {
-          const y = candlestickSeries.priceToCoordinate(panel.callWallPrice);
+        function positionOne(price, labelEl) {
+          if (price == null) { labelEl.style.display = 'none'; return; }
+          const y = candlestickSeries.priceToCoordinate(price);
           if (y != null && y >= 0 && y <= height) {
-            els.callWallLabel.style.display = 'block';
-            els.callWallLabel.style.top = `${y}px`;
+            labelEl.style.display = 'block';
+            labelEl.style.top = `${y}px`;
           } else {
-            els.callWallLabel.style.display = 'none'; // off-screen (scrolled/zoomed away) - hide rather than show floating in the wrong place
+            labelEl.style.display = 'none'; // off-screen (scrolled/zoomed away) - hide rather than show floating in the wrong place
           }
-        } else {
-          els.callWallLabel.style.display = 'none';
         }
 
-        if (panel.putWallPrice != null) {
-          const y = candlestickSeries.priceToCoordinate(panel.putWallPrice);
-          if (y != null && y >= 0 && y <= height) {
-            els.putWallLabel.style.display = 'block';
-            els.putWallLabel.style.top = `${y}px`;
-            // Both walls on the same strike would otherwise stack their
-            // labels directly on top of each other - flip Put Wall below
-            // the line so they stay readable side by side.
-            els.putWallLabel.classList.toggle('below-line', sameStrike);
-          } else {
-            els.putWallLabel.style.display = 'none';
-          }
-        } else {
-          els.putWallLabel.style.display = 'none';
-        }
+        positionOne(panel.callWallPrice, els.callWallLabel);
+        positionOne(panel.putWallPrice, els.putWallLabel);
+        positionOne(panel.highAreaPrice, els.highAreaLabel);
+        positionOne(panel.lowAreaPrice, els.lowAreaLabel);
+
+        // Both walls on the same strike would otherwise stack their
+        // labels directly on top of each other - flip Put Wall below
+        // the line so they stay readable side by side.
+        els.putWallLabel.classList.toggle('below-line', sameStrike);
       };
 
       panel.refreshCallPutWalls = async function (expiration) {
@@ -1202,6 +1280,14 @@
           const callWall = topStrike(callVolumeByStrike);
           const putWall = topStrike(putVolumeByStrike);
 
+          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
+          const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
+          const totalVolumeByStrike = new Map();
+          for (const s of sortedStrikes) {
+            totalVolumeByStrike.set(s, (callVolumeByStrike.get(s) || 0) + (putVolumeByStrike.get(s) || 0));
+          }
+          const { high: highArea, low: lowArea } = computeValueArea(sortedStrikes, totalVolumeByStrike, 0.70);
+
           const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
           const pctPair = (strike) => {
             const c = callVolumeByStrike.get(strike) || 0;
@@ -1214,9 +1300,34 @@
 
           if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
           if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+          if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+          if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
 
           panel.callWallPrice = callWall;
           panel.putWallPrice = putWall;
+          panel.highAreaPrice = highArea;
+          panel.lowAreaPrice = lowArea;
+
+          if (highArea != null) {
+            panel.highAreaLine = candlestickSeries.createPriceLine({
+              price: highArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.highAreaLabel.innerText = `High Area: ${highArea}`;
+          }
+          if (lowArea != null) {
+            panel.lowAreaLine = candlestickSeries.createPriceLine({
+              price: lowArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
+          }
 
           if (callWall != null) {
             panel.callWallLine = candlestickSeries.createPriceLine({
@@ -1242,32 +1353,38 @@
           }
           panel.positionWallLabels();
 
-          // Per-strike breakdown list - 4 strikes above the higher wall,
-          // 4 below the lower wall, with everything between (including
-          // both walls themselves) always shown. Keeps the list a
-          // manageable size instead of dumping the whole chain.
-          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
-          const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
+          // Per-strike breakdown list - spans the computed Value Area
+          // (Low Area to High Area), same range the two blue lines mark.
           let nearby = sortedStrikes;
-          if (callWall != null && putWall != null) {
-            const lowerWall = Math.min(callWall, putWall);
-            const upperWall = Math.max(callWall, putWall);
-            const lowerIdx = sortedStrikes.indexOf(lowerWall);
-            const upperIdx = sortedStrikes.indexOf(upperWall);
-            const start = Math.max(0, lowerIdx - 4);
-            const end = Math.min(sortedStrikes.length - 1, upperIdx + 4);
-            nearby = sortedStrikes.slice(start, end + 1);
+          if (highArea != null && lowArea != null) {
+            const lowIdx = sortedStrikes.indexOf(lowArea);
+            const highIdx = sortedStrikes.indexOf(highArea);
+            nearby = sortedStrikes.slice(lowIdx, highIdx + 1);
           }
           nearby = nearby.slice().sort((a, b) => b - a); // display highest strike first, like the reference image
+
+          const maxTotalInRange = Math.max(1, ...nearby.map((s) => totalVolumeByStrike.get(s) || 0));
 
           els.volwallList.innerHTML = nearby.map((strike) => {
             const { c, p, cPct, pPct } = pctPair(strike);
             const isWallRow = strike === callWall || strike === putWall;
+            const total = c + p;
+            // This strike's bar length relative to the busiest strike in
+            // the visible range - the call/put split within that bar
+            // uses each side's actual share of THIS strike's volume.
+            const barWidthPct = (total / maxTotalInRange) * 100;
+            const callSharePct = total > 0 ? (c / total) * 100 : 0;
+            const putSharePct = total > 0 ? (p / total) * 100 : 0;
             return `<div class="volwall-row${isWallRow ? ' pivot-row' : ''}">` +
               `<span class="volwall-strike-col">${strike}</span>` +
               `<span class="volwall-call-col">C:${fmt(c)} <span class="volwall-call-pct">(${cPct}%)</span></span>` +
               `<span class="volwall-put-col">P:${fmt(p)} <span class="volwall-put-pct">(${pPct}%)</span></span>` +
-              `</div>`;
+              `</div>` +
+              `<div class="volwall-bar-track">` +
+              `<div class="volwall-bar-fill" style="width:${barWidthPct}%;">` +
+              `<div class="volwall-bar-call" style="width:${callSharePct}%;"></div>` +
+              `<div class="volwall-bar-put" style="width:${putSharePct}%;"></div>` +
+              `</div></div>`;
           }).join('') || 'No volume data yet';
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
@@ -1324,10 +1441,16 @@
         clearInterval(panel.wallRefreshTimer);
         if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
         if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+        if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+        if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
         panel.callWallPrice = null;
         panel.putWallPrice = null;
+        panel.highAreaPrice = null;
+        panel.lowAreaPrice = null;
         els.callWallLabel.style.display = 'none';
         els.putWallLabel.style.display = 'none';
+        els.highAreaLabel.style.display = 'none';
+        els.lowAreaLabel.style.display = 'none';
 
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
