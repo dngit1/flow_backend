@@ -1310,6 +1310,15 @@
       };
 
       panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow) {
+        // Defensive guard - a crash here (tradePrice not a real number)
+        // was observed in practice and its exact cause isn't confirmed
+        // yet. This stops it from breaking the whole tick (which was
+        // also silently preventing flow/RSI/MA updates from running),
+        // and logs the actual bad value so the real source can be found.
+        if (typeof tradePrice !== 'number' || !Number.isFinite(tradePrice)) {
+          console.error(`[price:${panel.symbol}] handlePriceTick got a non-numeric tradePrice:`, tradePrice, 'timeMs:', timeMs);
+          return;
+        }
         const tradeTime = Math.floor(timeMs / 1000);
         const currentMinuteBucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
         // A late-arriving update describing an already-superseded bucket
