@@ -1091,7 +1091,7 @@
           if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
-            panel.handlePriceTick(msg.price, msg.timeMs);
+            panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low);
           } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
             if (msg.premium < BIG_FLOW_THRESHOLD) return;
             // Big Flow watches several expirations, one of which is often
@@ -1304,17 +1304,24 @@
         candlestickSeries.setMarkers(panel.flowMarkers);
       };
 
-      panel.handlePriceTick = function (tradePrice, timeMs) {
+      panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow) {
         const tradeTime = Math.floor(timeMs / 1000);
         const currentMinuteBucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
+        // Futures aggregates arrive as a complete already-formed bar (its
+        // own real open/high/low), not a single raw trade - using those
+        // directly avoids plotting a flat, zero-range sliver where the
+        // bar's actual range should be. Stocks (raw ticks via Alpaca)
+        // don't pass these, so they keep synthesizing range from
+        // individual tick comparisons as before.
+        const hasAggregateRange = aggHigh != null && aggLow != null;
 
         if (currentMinuteBucket > panel.lastBarTime) {
           panel.lastBarTime = currentMinuteBucket;
-          panel.lastBarOpen = tradePrice;
-          panel.currentBarHigh = tradePrice;
-          panel.currentBarLow = tradePrice;
+          panel.lastBarOpen = hasAggregateRange && aggOpen != null ? aggOpen : tradePrice;
+          panel.currentBarHigh = hasAggregateRange ? aggHigh : tradePrice;
+          panel.currentBarLow = hasAggregateRange ? aggLow : tradePrice;
           candlestickSeries.update({
-            time: currentMinuteBucket, open: tradePrice, high: tradePrice, low: tradePrice, close: tradePrice,
+            time: currentMinuteBucket, open: panel.lastBarOpen, high: panel.currentBarHigh, low: panel.currentBarLow, close: tradePrice,
           });
           panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
         } else {
@@ -1322,8 +1329,8 @@
           // seen so far - comparing only the last two ticks (the
           // previous bug) collapses the wick down to almost nothing,
           // since most consecutive ticks don't move much on their own.
-          panel.currentBarHigh = Math.max(panel.currentBarHigh, tradePrice);
-          panel.currentBarLow = Math.min(panel.currentBarLow, tradePrice);
+          panel.currentBarHigh = Math.max(panel.currentBarHigh, hasAggregateRange ? aggHigh : tradePrice);
+          panel.currentBarLow = Math.min(panel.currentBarLow, hasAggregateRange ? aggLow : tradePrice);
           candlestickSeries.update({
             time: panel.lastBarTime,
             open: panel.lastBarOpen,
