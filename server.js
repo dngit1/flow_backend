@@ -9,6 +9,7 @@ const { createAlpacaHub } = require('./lib/alpacaHub');
 const { createTradierHub } = require('./lib/tradierHub');
 const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
+const { createFlowBuffer } = require('./lib/flowBuffer');
 
 const {
   ALPACA_KEY,
@@ -82,6 +83,13 @@ const STOCK_BLOCK_TRADE_THRESHOLD = 500_000; // dollar value
 
 let currentAlpacaStatus = { status: 'disconnected', detail: null };
 
+// Shared rolling buffer of recent flow events (option flow, big flow, and
+// stock/futures share-flow all record into this) so a refreshed page or a
+// brand-new connection immediately sees recent activity instead of
+// starting blank. Purely in-memory, no extra API calls to any provider -
+// see lib/flowBuffer.js for the tradeoffs of this approach.
+const flowBuffer = createFlowBuffer();
+
 const alpacaHub = createAlpacaHub({
   apiKey: ALPACA_KEY,
   apiSecret: ALPACA_SECRET,
@@ -105,7 +113,9 @@ const alpacaHub = createAlpacaHub({
         // fall back to simple uptick/downtick.
         side = (prevPrice != null && price < prevPrice) ? 'SELL' : 'BUY';
       }
-      broadcastStockFlow(symbol, { price, size, dollarValue, side, timeMs });
+      const flowPayload = { price, size, dollarValue, side, timeMs };
+      flowBuffer.record(`stockflow:${symbol}`, flowPayload);
+      broadcastStockFlow(symbol, flowPayload);
     }
   },
   onStatus: (status, detail) => {
@@ -119,12 +129,16 @@ const alpacaHub = createAlpacaHub({
 const tradierHub = createTradierHub({
   token: TRADIER_TOKEN,
   onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
+  flowBuffer,
 });
 
 const futuresHub = createFuturesHub({
   apiKey: MASSIVE_API_KEY,
   onPrice: (ticker, payload) => broadcastPrice(ticker, payload),
-  onBigTrade: (ticker, payload) => broadcastStockFlow(ticker, payload), // same "large print on the underlying" concept as stocks, same broadcast function
+  onBigTrade: (ticker, payload) => {
+    flowBuffer.record(`stockflow:${ticker}`, payload);
+    broadcastStockFlow(ticker, payload);
+  }, // same "large print on the underlying" concept as stocks, same broadcast function
 });
 
 app.use('/api', createDataProxyRouter({
@@ -206,6 +220,11 @@ wss.on('connection', (ws) => {
         // since a successful load intentionally doesn't touch the badge.
         ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
       }
+      // Replay recent stock/futures share-flow history for this symbol,
+      // same "don't start blank" treatment as option flow gets.
+      flowBuffer.getRecent(`stockflow:${symbol}`).forEach((event) => {
+        sendToClient(clientId, { type: 'stock_flow', symbol, ...event });
+      });
       return;
     }
 
@@ -228,7 +247,11 @@ wss.on('connection', (ws) => {
         // which previously caused near-the-money strikes to silently fall
         // back to an arbitrary, unrelated strike.
         const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
-        const count = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
+        const { count, history } = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
+        // Replay recent history oldest-first, so the frontend's prepend
+        // logic ends up with newest-on-top, same as if these had arrived
+        // live one at a time.
+        history.forEach((event) => sendToClient(clientId, { type: 'flow', ...event }));
         sendToClient(clientId, { type: 'flow_watching', symbol: msg.symbol, expiration: msg.expiration, contractCount: count });
       } catch (err) {
         sendToClient(clientId, { type: 'flow_error', error: err.message });
@@ -246,7 +269,8 @@ wss.on('connection', (ws) => {
     if (msg.type === 'watch_big_flow' && msg.symbol) {
       try {
         const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
-        const count = await tradierHub.watchBigFlow(clientId, msg.symbol.toUpperCase(), spotPrice);
+        const { count, history } = await tradierHub.watchBigFlow(clientId, msg.symbol.toUpperCase(), spotPrice);
+        history.forEach((event) => sendToClient(clientId, { type: 'flow', ...event }));
         sendToClient(clientId, { type: 'big_flow_watching', symbol: msg.symbol, contractCount: count });
       } catch (err) {
         sendToClient(clientId, { type: 'flow_error', error: err.message });
