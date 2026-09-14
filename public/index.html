@@ -1823,8 +1823,31 @@
         }
       };
 
-      els.searchBtn.addEventListener('click', () => {
-        const symbol = els.tickerInput.value.trim().toUpperCase();
+      // Known futures roots (mirrors futuresHub.js's CONTRACT_MULTIPLIERS
+      // keys) - typing just "NQ" resolves to whichever specific contract
+      // is currently the active front month (e.g. "NQU6"), instead of
+      // needing to know/type the exact expiration code.
+      const FUTURES_ROOTS = new Set(['ES', 'NQ', 'YM', 'RTY', 'GC', 'CL', 'MES', 'MNQ', 'MYM', 'M2K', 'MGC', 'MCL']);
+
+      async function resolveSymbolIfRoot(input) {
+        if (!FUTURES_ROOTS.has(input)) return input;
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/futures-resolve?root=${encodeURIComponent(input)}`);
+          const data = await res.json();
+          if (!res.ok || !data.ticker) throw new Error(data.error || 'Resolution failed');
+          console.log(`[futures] Resolved ${input} -> ${data.ticker}`);
+          return data.ticker;
+        } catch (err) {
+          console.error(`[futures] Failed to resolve root ${input}:`, err);
+          panel.showChartError(`Couldn't resolve the current ${input} contract: ${err.message}`);
+          return null;
+        }
+      }
+
+      els.searchBtn.addEventListener('click', async () => {
+        const rawSymbol = els.tickerInput.value.trim().toUpperCase();
+        if (!rawSymbol) return;
+        const symbol = await resolveSymbolIfRoot(rawSymbol);
         if (symbol && symbol !== panel.symbol) panel.loadInitialSeedData(symbol);
       });
       els.tickerInput.addEventListener('keypress', (e) => {
