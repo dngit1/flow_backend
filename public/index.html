@@ -567,6 +567,7 @@
       right: 62px; /* clears the native price axis labels */
       transform: translateY(-50%);
       display: flex;
+      flex-direction: row-reverse; /* bar-track (closest to axis) first visually, strike number trails leftward - matches how volume profile bars anchor to one edge */
       align-items: center;
       font-size: 10px;
       white-space: nowrap;
@@ -595,6 +596,7 @@
       border-radius: 2px;
       overflow: hidden;
       min-width: 2px; /* so a strike with tiny volume still shows a sliver, not nothing */
+      margin-left: auto; /* anchors the fill's right edge to the track's right edge - grows leftward with volume, like a real volume profile */
     }
 
     .strike-overlay-bar-call { height: 100%; background-color: #00c853; }
@@ -603,7 +605,7 @@
     .strike-overlay-text {
       position: absolute;
       top: 50%;
-      left: 4px;
+      right: 4px;
       transform: translateY(-50%);
       color: #ffffff;
       text-shadow: 0 0 3px #000000, 0 0 3px #000000; /* keeps text legible over both the green and red bar segments */
