@@ -1095,7 +1095,15 @@
           panel.wsMsgCount = (panel.wsMsgCount || 0) + 1;
           if (msg.type === 'flow') panel.wsFlowCount = (panel.wsFlowCount || 0) + 1;
           const nowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
+          // Display-only relabeling for the on-screen debug overlay - the
+          // underlying msg.type stays 'alpaca_status' everywhere else in
+          // the code (WS protocol, server, this handler's own branches
+          // below); this map only affects what gets rendered on screen,
+          // so the vendor name doesn't show up in a public-facing debug
+          // readout.
+          const DEBUG_TYPE_LABELS = { alpaca_status: 'price_feed_status' };
+          const debugTypeLabel = DEBUG_TYPE_LABELS[msg.type] || msg.type;
+          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${debugTypeLabel} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
             panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low);
@@ -1124,7 +1132,7 @@
             panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
             if (isFuturesTicker(panel.symbol)) return;
-            if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
+            if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
             else panel.setStatus('Disconnected');
           }
@@ -1809,7 +1817,7 @@
         panel.sendWS({ type: 'subscribe_price', symbol });
 
         if (isFuturesTicker(symbol)) {
-          panel.setStatus('Live Feed Connected', '#1b5e20');
+          panel.setStatus('Live', '#1b5e20');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
 
