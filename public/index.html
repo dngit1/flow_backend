@@ -677,8 +677,9 @@
     <label><strong>Futures Min Chart Marker:</strong></label>
     <select id="futures-marker-floor-select">
       <option value="2000000">$2M+</option>
-      <option value="4000000" selected>$4M+</option>
+      <option value="4000000">$4M+</option>
       <option value="6000000">$6M+</option>
+      <option value="8000000" selected>$8M+</option>
       <option value="10000000">$10M+</option>
     </select>
 
@@ -842,7 +843,7 @@
 
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
-    let FUTURES_CHART_MARKER_FLOOR = 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $2M threshold, this only controls what gets a chart arrow
+    let FUTURES_CHART_MARKER_FLOOR = 8_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
@@ -1307,6 +1308,13 @@
       panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow) {
         const tradeTime = Math.floor(timeMs / 1000);
         const currentMinuteBucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
+        // A late-arriving update describing an already-superseded bucket
+        // (e.g. an AM message for a minute that finished just as newer
+        // trade ticks had already started the next bar) - ignore it
+        // entirely, including price/MA/RSI display, to avoid the price
+        // text and the candle disagreeing with each other.
+        if (panel.lastBarTime != null && currentMinuteBucket < panel.lastBarTime) return;
+
         // Futures aggregates arrive as a complete already-formed bar (its
         // own real open/high/low), not a single raw trade - using those
         // directly avoids plotting a flat, zero-range sliver where the
