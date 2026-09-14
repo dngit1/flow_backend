@@ -878,21 +878,25 @@
     // Always Eastern Time (market/exchange time) regardless of the
     // viewer's own location - a trader in any timezone still sees the
     // same clock time everyone else trading US markets sees.
+    // Uses the viewer's own local browser timezone (no explicit timeZone
+    // override) - matches their computer's clock and TradingView's usual
+    // default display, so chart time, flow timestamps, and local time
+    // all agree with each other.
     function formatTradeTime(timestampMs) {
       return new Date(timestampMs).toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York',
+        hour: 'numeric', minute: '2-digit', second: '2-digit',
       });
     }
 
     // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds -
     // year/month/day ticks should show a date, not a time, particularly
     // relevant now that the 1-day timeframe spans many calendar days.
-    function formatChartEasternTime(unixSeconds, tickMarkType) {
+    function formatChartLocalTime(unixSeconds, tickMarkType) {
       const d = new Date(unixSeconds * 1000);
       if (tickMarkType != null && tickMarkType <= 2) {
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
-      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
     function isFuturesTicker(symbol) {
@@ -995,10 +999,10 @@
           timeVisible: true,
           secondsVisible: false,
           barSpacing: 8,
-          tickMarkFormatter: (time, tickMarkType) => formatChartEasternTime(time, tickMarkType),
+          tickMarkFormatter: (time, tickMarkType) => formatChartLocalTime(time, tickMarkType),
         },
         localization: {
-          timeFormatter: (time) => formatChartEasternTime(time),
+          timeFormatter: (time) => formatChartLocalTime(time),
         },
         // Three vertical bands sharing this one chart: price (top ~65%),
         // volume (middle band), RSI (bottom-most band).
