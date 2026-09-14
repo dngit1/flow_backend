@@ -1175,7 +1175,12 @@
         const actualBars = Math.max(1, panel.closeHistory.length);
         const targetVisibleBars = Math.min(200, actualBars);
         const newBarSpacing = Math.max(2, Math.min(20, width / targetVisibleBars));
-        const rightOffset = 10;
+        // Roughly half the visible bar count as empty space on the right -
+        // puts the last candle near the center of the screen instead of
+        // hugging the right edge, so the volume profile overlay (which
+        // anchors to the right and extends leftward) has clean room to
+        // sit in without overlapping recent price action.
+        const rightOffset = Math.round(targetVisibleBars / 2);
         chart.timeScale().applyOptions({ barSpacing: newBarSpacing, rightOffset });
         chart.timeScale().scrollToPosition(rightOffset, false);
         chart.priceScale('right').applyOptions({ autoScale: true });
