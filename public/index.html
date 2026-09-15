@@ -1330,7 +1330,7 @@
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
           position: isBuy ? 'belowBar' : 'aboveBar',
-          color: isFutures ? '#ffd600' : '#9c27b0',
+          color: isBuy ? '#00c853' : '#ff5252',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: isFutures
             ? `${isBuy ? 'B' : 'S'} ${formattedContracts} ${unitLabel}${viaStr} (${formattedVal})`
