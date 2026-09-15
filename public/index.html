@@ -1124,7 +1124,7 @@
             panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
             if (isFuturesTicker(panel.symbol)) return;
-            if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
+            if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
             else panel.setStatus('Disconnected');
           }
@@ -1835,7 +1835,7 @@
         panel.sendWS({ type: 'subscribe_price', symbol });
 
         if (isFuturesTicker(symbol)) {
-          panel.setStatus('Live Feed Connected', '#1b5e20');
+          panel.setStatus('Live', '#1b5e20');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
 
