@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Live Option & Futures Flow</title>
+  <title>Live Option Flow</title>
   <style>
     html, body {
       margin: 0;
@@ -232,6 +232,19 @@
       min-height: 300px;
       min-width: 200px;
       overflow: hidden;
+    }
+
+    .chart-watermark {
+      position: absolute;
+      bottom: 4px;
+      right: 8px;
+      z-index: 3;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: rgba(209, 212, 220, 0.35);
+      pointer-events: none;
+      user-select: none;
     }
 
     .chart-error-banner {
@@ -757,6 +770,7 @@
           <span class="ws-debug"></span>
         </div>
         <div class="chart-container"></div>
+        <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
@@ -823,6 +837,7 @@
           <span class="ws-debug"></span>
         </div>
         <div class="chart-container"></div>
+        <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
@@ -995,7 +1010,7 @@
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
-        layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc' },
+        layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc', attributionLogo: false },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
         timeScale: {
           timeVisible: true,
@@ -1260,7 +1275,7 @@
           position: isCall ? 'belowBar' : 'aboveBar',
           color: isCall ? '#00c853' : '#ff5252',
           shape: isCall ? 'arrowUp' : 'arrowDown',
-          text: `${expirationLabel ? `[${expirationLabel}] ` : ''}${sideLabel} ${type} $${strike} (${formattedPrem})`,
+          text: `${expirationLabel ? `[${expirationLabel}] ` : ''}${sideLabel === 'SOLD' ? 'S' : 'B'} ${type} $${strike} (${formattedPrem})`,
           size: MARKER_SIZE,
           isCall,
           side: sideLabel,
