@@ -1095,15 +1095,7 @@
           panel.wsMsgCount = (panel.wsMsgCount || 0) + 1;
           if (msg.type === 'flow') panel.wsFlowCount = (panel.wsFlowCount || 0) + 1;
           const nowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-          // Display-only relabeling for the on-screen debug overlay - the
-          // underlying msg.type stays 'alpaca_status' everywhere else in
-          // the code (WS protocol, server, this handler's own branches
-          // below); this map only affects what gets rendered on screen,
-          // so the vendor name doesn't show up in a public-facing debug
-          // readout.
-          const DEBUG_TYPE_LABELS = { alpaca_status: 'price_feed_status' };
-          const debugTypeLabel = DEBUG_TYPE_LABELS[msg.type] || msg.type;
-          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${debugTypeLabel} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
+          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
             panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low);
@@ -1132,7 +1124,7 @@
             panel.pendingWatchExpiration = null;
           } else if (msg.type === 'alpaca_status') {
             if (isFuturesTicker(panel.symbol)) return;
-            if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
+            if (msg.status === 'connected') panel.setStatus('Live Feed Connected', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
             else panel.setStatus('Disconnected');
           }
@@ -1226,6 +1218,31 @@
         if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
       };
 
+      // Flow events (especially ones replayed from the server's rolling
+      // history buffer on page load / reconnect) carry the REAL time the
+      // trade happened, which can be well in the past - markers were
+      // previously always pinned to panel.lastBarTime, so a whole batch
+      // of replayed history all visually landed on the current candle.
+      // This buckets the real timestamp into the chart's own interval,
+      // then snaps to the closest candle that actually exists on the
+      // chart (via closeHistory) - a marker's time has to match a real
+      // data point to render, and thin/gappy periods mean the exact
+      // bucket doesn't always have a candle.
+      panel.resolveMarkerTime = function (timestampMs) {
+        const history = panel.closeHistory;
+        if (!timestampMs || !panel.intervalSeconds || !history || !history.length) return panel.lastBarTime;
+        const tradeTime = Math.floor(timestampMs / 1000);
+        const bucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
+        if (bucket <= history[0].time) return history[0].time;
+        if (bucket >= history[history.length - 1].time) return history[history.length - 1].time;
+        let candidate = history[0].time;
+        for (let i = 0; i < history.length; i++) {
+          if (history[i].time <= bucket) candidate = history[i].time;
+          else break;
+        }
+        return candidate;
+      };
+
       panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel) {
         if (!panel.lastBarTime) return;
 
@@ -1239,7 +1256,7 @@
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
         panel.flowMarkers.push({
-          time: panel.lastBarTime,
+          time: panel.resolveMarkerTime(timestamp),
           position: isCall ? 'belowBar' : 'aboveBar',
           color: isCall ? '#00c853' : '#ff5252',
           shape: isCall ? 'arrowUp' : 'arrowDown',
@@ -1260,8 +1277,8 @@
         if (!panel.lastBarTime) return;
 
         const isFutures = isFuturesTicker(panel.symbol);
-        const unitLabel = isFutures ? 'contracts' : 'sh';
-        const tagLabel = isFutures ? '' : 'SHARES'; // futures cards drop the tag entirely - the "NQU6: X Contracts" format is self-explanatory
+        const unitLabel = isFutures ? 'CTs' : 'sh';
+        const tagLabel = isFutures ? '' : 'SHARES'; // futures cards drop the tag entirely - the "NQU6: X CTs" format is self-explanatory
         const isBuy = side === 'BUY';
         const formattedVal = dollarValue >= 1_000_000 ? `$${(dollarValue / 1_000_000).toFixed(2)}M` : `$${(dollarValue / 1000).toFixed(0)}k`;
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
@@ -1274,18 +1291,19 @@
 
         // Futures: contract count (standard-equivalent, so a micro fill
         // shows on the same scale as the standard contract), formatted
-        // as "NQU6: 4 Contracts $5.24M" in one line, dollar value inline
-        // rather than a separate right-aligned figure.
-        // Stocks: unchanged, dollar value stays as the prominent figure.
+        // as "NQU6: 4 CTs" with the dollar value in its own colored
+        // span (primaryText below) - same layout as stocks, so the $
+        // total gets the same green(buy)/red(sell) coloring via the
+        // existing .flow-card.call/.put .flow-premium CSS rules.
         const contractCount = standardEquivalentSize != null ? standardEquivalentSize : shareSize;
         const isWholeNumber = Math.abs(contractCount - Math.round(contractCount)) < 0.05;
         const formattedContracts = isWholeNumber ? Math.round(contractCount).toLocaleString('en-US') : contractCount.toFixed(1);
         const formattedSize = shareSize.toLocaleString('en-US');
 
-        const primaryText = isFutures ? '' : formattedVal;
+        const primaryText = formattedVal;
         const secondaryLine = `${isBuy ? 'BOUGHT' : 'SOLD'}${timeStr ? ' &middot; ' + timeStr : ''}`;
         const detailLine = isFutures
-          ? `${panel.symbol}: ${formattedContracts} Contracts ${formattedVal}${viaStr}`
+          ? `${panel.symbol}: ${formattedContracts} ${unitLabel}${viaStr}`
           : `${panel.symbol} ${formattedSize} ${unitLabel}${viaStr}`;
 
         const card = document.createElement('div');
@@ -1310,13 +1328,13 @@
         if (isFutures && dollarValue < FUTURES_CHART_MARKER_FLOOR) return;
 
         panel.flowMarkers.push({
-          time: panel.lastBarTime,
+          time: panel.resolveMarkerTime(timestamp),
           position: isBuy ? 'belowBar' : 'aboveBar',
-          color: '#9c27b0',
+          color: isFutures ? '#ffd600' : '#9c27b0',
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: isFutures
-            ? `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedContracts} ${unitLabel}${viaStr} (${formattedVal})`
-            : `${isBuy ? 'BOUGHT' : 'SOLD'} ${formattedSize} ${unitLabel}${viaStr} (${formattedVal})`,
+            ? `${isBuy ? 'B' : 'S'} ${formattedContracts} ${unitLabel}${viaStr} (${formattedVal})`
+            : `${isBuy ? 'B' : 'S'} ${formattedSize} ${unitLabel}${viaStr} (${formattedVal})`,
           size: MARKER_SIZE,
         });
         if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
@@ -1817,7 +1835,7 @@
         panel.sendWS({ type: 'subscribe_price', symbol });
 
         if (isFuturesTicker(symbol)) {
-          panel.setStatus('Live', '#1b5e20');
+          panel.setStatus('Live Feed Connected', '#1b5e20');
           els.expirationSelect.disabled = true;
           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
 
