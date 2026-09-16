@@ -79,7 +79,7 @@ function broadcastStockFlow(symbol, payload) {
 // Filtered server-side (not client-adjustable like the option flow
 // thresholds) - without this, every single trade on a liquid stock would
 // get broadcast to every watching client, which is far too much traffic.
-const STOCK_BLOCK_TRADE_THRESHOLD = 500_000; // dollar value
+const STOCK_BLOCK_TRADE_THRESHOLD = 1_000_000; // dollar value
 
 let currentAlpacaStatus = { status: 'disconnected', detail: null };
 
