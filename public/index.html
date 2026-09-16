@@ -445,6 +445,18 @@
       margin-bottom: 8px;
     }
 
+    .sr-toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #d1d4dc;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #1f293d;
+      cursor: pointer;
+    }
+
     .indicator-type-select {
       background-color: #1f293d;
       color: #ffffff;
@@ -727,6 +739,10 @@
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="sr-toggle-checkbox" checked />
+            Support/Resistance Levels
+          </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
               <option value="MA">MA</option>
@@ -794,6 +810,10 @@
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="sr-toggle-checkbox" checked />
+            Support/Resistance Levels
+          </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
               <option value="MA">MA</option>
@@ -857,6 +877,15 @@
     const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
     const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
 
+    // Support/resistance: swing-high/low ("fractal") clustering over a
+    // longer lookback, recomputed once per new candle (not every tick,
+    // to avoid flickering on noise) so levels adapt gradually as genuinely
+    // new structure forms rather than reacting to every price wiggle.
+    const SR_LOOKBACK_BARS = 300; // how far back to look for swing points
+    const SR_FRACTAL_N = 3; // a bar's high/low must beat N neighbors on EACH side to count as a swing point - higher N = fewer, more significant swings
+    const SR_CLUSTER_TOLERANCE_PCT = 0.0015; // swing points within 0.15% of each other's price get grouped into the same level
+    const SR_LEVELS_PER_SIDE = 2; // how many resistance/support lines to draw above/below current price
+
     // Remembers each panel's ticker, timeframe, and indicators across
     // visits, per panel index, so the chart looks the way it was left
     // instead of always resetting to the SPY/QQQ defaults. Read once at
@@ -883,6 +912,7 @@
         const settings = {
           symbol: panel.symbol,
           interval: panel.interval,
+          srEnabled: panel.srEnabled,
           indicators: panel.indicators.map((ind) => ({
             type: ind.type,
             period: ind.period,
@@ -1013,6 +1043,7 @@
       const saved = loadChartSettings(index);
       const initialSymbol = saved?.symbol || defaultSymbol;
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
+      const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
@@ -1038,6 +1069,7 @@
         indicatorPeriodInput: root.querySelector('.indicator-period-input'),
         indicatorStyleSelect: root.querySelector('.indicator-style-select'),
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
+        srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -1047,6 +1079,7 @@
       // while a restored TSLA chart loads underneath it).
       els.tickerInput.value = initialSymbol;
       els.timeframeSelect.value = initialInterval;
+      els.srToggleCheckbox.checked = initialSrEnabled;
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
@@ -1106,6 +1139,8 @@
         hasLoadedOnce: false,
         pendingWatchExpiration: null,
         pendingIndicatorRestore: saved?.indicators || [],
+        srLines: [], // currently-drawn support/resistance price lines - cleared and redrawn on each recompute
+        srEnabled: initialSrEnabled,
         chart,
         candlestickSeries,
         volumeSeries,
@@ -1435,6 +1470,7 @@
             time: currentMinuteBucket, open: panel.lastBarOpen, high: panel.currentBarHigh, low: panel.currentBarLow, close: tradePrice,
           });
           panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
+          panel.computeAndDrawSupportResistance();
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
           // seen so far - comparing only the last two ticks (the
@@ -1644,6 +1680,107 @@
         } else {
           els.candleTimer.style.display = 'none';
         }
+      };
+
+      // Finds swing highs/lows over the recent lookback, clusters nearby
+      // ones into levels, scores each cluster by touch count (weighted
+      // toward more recent touches), and draws the strongest few above and
+      // below current price as dashed price lines. Called once per new
+      // candle (see the price-tick handler) rather than every tick.
+      panel.computeAndDrawSupportResistance = function () {
+        // Old lines first, always - if this is a toggle-off, that alone
+        // is the whole job; if it's a normal recompute, stale lines
+        // shouldn't linger underneath the new ones anyway.
+        for (const line of panel.srLines) candlestickSeries.removePriceLine(line);
+        panel.srLines = [];
+        if (!panel.srEnabled) return;
+
+        const allBars = candlestickSeries.data();
+        const bars = allBars.slice(-SR_LOOKBACK_BARS);
+        const n = SR_FRACTAL_N;
+
+        // Need at least a full window on both sides of some candidate
+        // bars, plus a handful of candidates - otherwise skip rather than
+        // draw levels from too little data.
+        if (bars.length < n * 2 + 5 || panel.lastBarPrice == null) return;
+
+        const swingHighs = [];
+        const swingLows = [];
+        // Exclude the last N bars from being CENTERS - a swing point needs
+        // N confirmed neighbors on its right side too, which the most
+        // recent bars don't have yet.
+        for (let i = n; i < bars.length - n; i++) {
+          let isHigh = true;
+          let isLow = true;
+          for (let j = i - n; j <= i + n; j++) {
+            if (j === i) continue;
+            if (bars[j].high > bars[i].high) isHigh = false;
+            if (bars[j].low < bars[i].low) isLow = false;
+          }
+          if (isHigh) swingHighs.push({ price: bars[i].high, index: i });
+          if (isLow) swingLows.push({ price: bars[i].low, index: i });
+        }
+
+        const lastIndex = bars.length - 1;
+        const tolerance = panel.lastBarPrice * SR_CLUSTER_TOLERANCE_PCT;
+
+        // Greedy clustering: sort by price, then fold each point into the
+        // running cluster if it's within tolerance of that cluster's
+        // average, else start a new cluster.
+        function clusterPoints(points) {
+          const sorted = [...points].sort((a, b) => a.price - b.price);
+          const clusters = [];
+          for (const pt of sorted) {
+            const current = clusters[clusters.length - 1];
+            if (current && Math.abs(pt.price - current.avgPrice) <= tolerance) {
+              current.points.push(pt);
+              current.avgPrice = current.points.reduce((sum, p) => sum + p.price, 0) / current.points.length;
+            } else {
+              clusters.push({ points: [pt], avgPrice: pt.price });
+            }
+          }
+          // Recency-weighted touch score - a touch 5 bars ago counts for
+          // much more than one 250 bars ago, so a level that's gone stale
+          // naturally loses out to more current structure over time.
+          return clusters.map((c) => ({
+            price: c.avgPrice,
+            score: c.points.reduce((sum, p) => sum + 1 / (1 + (lastIndex - p.index) / 50), 0),
+          }));
+        }
+
+        const resistanceCandidates = clusterPoints(swingHighs)
+          .filter((c) => c.price > panel.lastBarPrice)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, SR_LEVELS_PER_SIDE)
+          .sort((a, b) => a.price - b.price); // closest-to-price first for R1/R2 labeling
+
+        const supportCandidates = clusterPoints(swingLows)
+          .filter((c) => c.price < panel.lastBarPrice)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, SR_LEVELS_PER_SIDE)
+          .sort((a, b) => b.price - a.price); // closest-to-price first for S1/S2 labeling
+
+        resistanceCandidates.forEach((c, i) => {
+          panel.srLines.push(candlestickSeries.createPriceLine({
+            price: c.price,
+            color: '#ff5252',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `R${i + 1}`,
+          }));
+        });
+
+        supportCandidates.forEach((c, i) => {
+          panel.srLines.push(candlestickSeries.createPriceLine({
+            price: c.price,
+            color: '#00c853',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `S${i + 1}`,
+          }));
+        });
       };
 
       panel.refreshCallPutWalls = async function (expiration) {
@@ -1921,6 +2058,7 @@
         els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
         panel.updatePercentChange(panel.lastBarPrice);
         panel.positionCandleTimer();
+        panel.computeAndDrawSupportResistance();
         panel.hasLoadedOnce = true;
         saveChartSettings(panel);
 
@@ -1998,6 +2136,12 @@
       els.indicatorToggleBtn.addEventListener('click', () => {
         els.indicatorPanel.classList.toggle('hidden');
         els.indicatorToggleBtn.classList.toggle('active', !els.indicatorPanel.classList.contains('hidden'));
+      });
+
+      els.srToggleCheckbox.addEventListener('change', () => {
+        panel.srEnabled = els.srToggleCheckbox.checked;
+        panel.computeAndDrawSupportResistance();
+        saveChartSettings(panel);
       });
 
       els.indicatorAddBtn.addEventListener('click', () => {
