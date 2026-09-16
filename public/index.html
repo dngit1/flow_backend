@@ -649,7 +649,7 @@
 
     .sr-label {
       position: absolute;
-      left: 50%;
+      left: 25%; /* kept out of the right half, where the right-anchored strike/volume-profile overlay sits on stock charts */
       transform: translate(-50%, -100%);
       z-index: 14;
       padding: 1px 6px;
@@ -760,6 +760,10 @@
             <input type="checkbox" class="sr-toggle-checkbox" checked />
             Support/Resistance Levels
           </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
+            Volume Profile (Strikes)
+          </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
               <option value="MA">MA</option>
@@ -831,6 +835,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="sr-toggle-checkbox" checked />
             Support/Resistance Levels
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
+            Volume Profile (Strikes)
           </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
@@ -936,6 +944,7 @@
           symbol: panel.symbol,
           interval: panel.interval,
           srEnabled: panel.srEnabled,
+          volumeProfileEnabled: panel.volumeProfileEnabled,
           indicators: panel.indicators.map((ind) => ({
             type: ind.type,
             period: ind.period,
@@ -1067,6 +1076,7 @@
       const initialSymbol = saved?.symbol || defaultSymbol;
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
+      const initialVolumeProfileEnabled = saved?.volumeProfileEnabled !== false; // default on; only off if explicitly saved as off
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
@@ -1094,6 +1104,7 @@
         indicatorStyleSelect: root.querySelector('.indicator-style-select'),
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
+        volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -1104,6 +1115,7 @@
       els.tickerInput.value = initialSymbol;
       els.timeframeSelect.value = initialInterval;
       els.srToggleCheckbox.checked = initialSrEnabled;
+      els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
@@ -1166,6 +1178,7 @@
         srLines: [], // currently-drawn support/resistance price lines - cleared and redrawn on each recompute
         srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
+        volumeProfileEnabled: initialVolumeProfileEnabled,
         chart,
         candlestickSeries,
         volumeSeries,
@@ -1620,6 +1633,10 @@
       // mapping might have shifted (ticks, resize, pan/zoom), same
       // tracking approach as the wall labels.
       panel.positionStrikeOverlay = function () {
+        if (!panel.volumeProfileEnabled) {
+          els.strikeOverlayContainer.innerHTML = '';
+          return;
+        }
         const height = els.chartContainer.clientHeight || 0;
         const fmtK = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
         const maxTotal = Math.max(1, ...panel.strikeOverlayData.map((d) => d.c + d.p));
@@ -2202,6 +2219,12 @@
       els.srToggleCheckbox.addEventListener('change', () => {
         panel.srEnabled = els.srToggleCheckbox.checked;
         panel.computeAndDrawSupportResistance();
+        saveChartSettings(panel);
+      });
+
+      els.volumeProfileToggleCheckbox.addEventListener('change', () => {
+        panel.volumeProfileEnabled = els.volumeProfileToggleCheckbox.checked;
+        panel.positionStrikeOverlay();
         saveChartSettings(panel);
       });
 
