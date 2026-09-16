@@ -398,30 +398,6 @@
     .flow-premium { color: #00c853; font-weight: 600; }
     .flow-card.put .flow-premium { color: #ff5252; }
 
-    .bigflow-toggle-btn {
-      background-color: #2b3548;
-      color: #ffffff;
-      border: 1px solid #364153;
-      padding: 7px 10px;
-      border-radius: 6px;
-      font-size: 13px;
-      cursor: pointer;
-    }
-
-    .bigflow-toggle-btn:hover {
-      background-color: #364153;
-    }
-
-    .bigflow-toggle-btn.active {
-      background-color: #7a5f00;
-      border-color: #a68100;
-    }
-
-    .bigflow-toggle-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
     .indicator-toggle-btn {
       background-color: #2b3548;
       color: #ffffff;
@@ -658,6 +634,23 @@
       color: #00c853;
     }
 
+    .candle-timer {
+      position: absolute;
+      right: 4px;
+      transform: translateY(2px); /* sits just below the native price label box */
+      z-index: 15;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      pointer-events: none;
+      background-color: rgba(19, 23, 34, 0.85);
+      color: #8fa0be;
+      display: none;
+    }
+
     .wall-label.high-area-label,
     .wall-label.low-area-label {
       background-color: transparent;
@@ -709,11 +702,6 @@
       </div>
       <div id="leaderboard-list">Loading...</div>
     </div>
-
-    <label><strong>Check Premium:</strong></label>
-    <input type="text" id="premium-check-input" class="ticker-input" placeholder="e.g. AAPL" style="width: 80px;" />
-    <button id="premium-check-btn" class="leaderboard-btn">Check</button>
-    <span id="premium-check-result"></span>
   </div>
 
   <div class="panels-row">
@@ -736,7 +724,6 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <button class="bigflow-toggle-btn active">Big Flow: On</button>
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
@@ -774,6 +761,7 @@
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="candle-timer"></div>
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
@@ -803,7 +791,6 @@
       <select class="expiration-select" disabled>
         <option value="">Loading...</option>
       </select>
-      <button class="bigflow-toggle-btn active">Big Flow: On</button>
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
@@ -841,6 +828,7 @@
         <div class="chart-error-banner"></div>
         <div class="wall-label call-wall-label" style="display:none;"></div>
         <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="candle-timer"></div>
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
@@ -864,7 +852,49 @@
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
-    const BIG_FLOW_THRESHOLD = 250000; // only genuinely large prints show in the "any expiration" alert feature - with 6 expirations x ~40 contracts, showing everything above MIN_FLOW_PREMIUM would be overwhelming
+    const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
+    const BIG_FLOW_THRESHOLD_OTHER = 150000; // everything else - thinner chains mean a $250k single print is comparatively rare, so this stays lower to actually surface activity
+    const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
+    const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
+
+    // Remembers each panel's ticker, timeframe, and indicators across
+    // visits, per panel index, so the chart looks the way it was left
+    // instead of always resetting to the SPY/QQQ defaults. Read once at
+    // startup (loadChartSettings) and written every time one of those
+    // three things changes (saveChartSettings) - never on every price
+    // tick or anything high-frequency. Wrapped in try/catch since
+    // localStorage can throw (private browsing, storage disabled/full).
+    function chartSettingsKey(index) {
+      return `xnlflow:panel:${index}:settings`;
+    }
+
+    function loadChartSettings(index) {
+      try {
+        const raw = localStorage.getItem(chartSettingsKey(index));
+        return raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        console.error(`[settings] failed to load panel ${index} settings:`, err);
+        return null;
+      }
+    }
+
+    function saveChartSettings(panel) {
+      try {
+        const settings = {
+          symbol: panel.symbol,
+          interval: panel.interval,
+          indicators: panel.indicators.map((ind) => ({
+            type: ind.type,
+            period: ind.period,
+            lineStyle: ind.lineStyle,
+            lineType: ind.lineType,
+          })),
+        };
+        localStorage.setItem(chartSettingsKey(panel.index), JSON.stringify(settings));
+      } catch (err) {
+        console.error(`[settings] failed to save panel ${panel.index} settings:`, err);
+      }
+    }
 
     async function fetchHistoricalBars(symbol, interval) {
       let response;
@@ -980,6 +1010,9 @@
 
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
+      const saved = loadChartSettings(index);
+      const initialSymbol = saved?.symbol || defaultSymbol;
+      const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
@@ -993,10 +1026,10 @@
         chartContainer: root.querySelector('.chart-container'),
         chartErrorBanner: root.querySelector('.chart-error-banner'),
         flowList: root.querySelector('.flow-list'),
-        bigflowToggleBtn: root.querySelector('.bigflow-toggle-btn'),
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         callWallLabel: root.querySelector('.call-wall-label'),
         putWallLabel: root.querySelector('.put-wall-label'),
+        candleTimer: root.querySelector('.candle-timer'),
         highAreaLabel: root.querySelector('.high-area-label'),
         lowAreaLabel: root.querySelector('.low-area-label'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
@@ -1007,6 +1040,13 @@
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         indicatorList: root.querySelector('.indicator-list'),
       };
+
+      // Reflect the restored (or default) symbol/timeframe in the actual
+      // input controls, so the UI matches what's about to load instead of
+      // showing the hardcoded HTML default (e.g. input still says "SPY"
+      // while a restored TSLA chart loads underneath it).
+      els.tickerInput.value = initialSymbol;
+      els.timeframeSelect.value = initialInterval;
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
@@ -1061,20 +1101,21 @@
 
       const panel = {
         index,
-        symbol: defaultSymbol,
+        symbol: initialSymbol,
         active: true,
         hasLoadedOnce: false,
         pendingWatchExpiration: null,
+        pendingIndicatorRestore: saved?.indicators || [],
         chart,
         candlestickSeries,
         volumeSeries,
         rsiSeries,
-        indicators: [], // [{id, type, period, color, series, currentValue}] - fully user-managed
+        indicators: [], // [{id, type, period, lineStyle, lineType, color, series, currentValue}] - fully user-managed
         closeHistory: [],
         previousClose: null,
         bigFlowEnabled: true,
-        interval: '1min', // sent to the backend - matches the Timeframe dropdown's value
-        intervalSeconds: 60, // used to bucket live ticks into the right candle width
+        interval: initialInterval, // sent to the backend - matches the Timeframe dropdown's value
+        intervalSeconds: INTERVAL_SECONDS[initialInterval] || 60, // used to bucket live ticks into the right candle width
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
@@ -1115,7 +1156,8 @@
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
             panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low);
           } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
-            if (msg.premium < BIG_FLOW_THRESHOLD) return;
+            const bigFlowThreshold = BIG_FLOW_MAJOR_SYMBOLS.has(panel.symbol) ? BIG_FLOW_THRESHOLD_MAJOR : BIG_FLOW_THRESHOLD_OTHER;
+            if (msg.premium < bigFlowThreshold) return;
             // Big Flow watches several expirations, one of which is often
             // the SAME one currently selected in the dropdown - without
             // this check, a trade on that shared expiration shows up
@@ -1439,6 +1481,7 @@
         panel.lastBarPrice = tradePrice;
         panel.positionWallLabels();
         panel.positionStrikeOverlay();
+        panel.positionCandleTimer();
       };
 
       panel.callWallLine = null;
@@ -1493,10 +1536,11 @@
           lastValueVisible: false,
         });
 
-        const indicator = { id, type, period, color, series, currentValue: null };
+        const indicator = { id, type, period, lineStyle, lineType, color, series, currentValue: null };
         panel.indicators.push(indicator);
         panel.recomputeIndicator(indicator);
         panel.renderIndicatorList();
+        saveChartSettings(panel);
       };
 
       panel.removeIndicator = function (id) {
@@ -1506,6 +1550,7 @@
         chart.removeSeries(ind.series);
         panel.indicators.splice(idx, 1);
         panel.renderIndicatorList();
+        saveChartSettings(panel);
       };
 
       // Renders the always-visible per-strike overlay rows on the chart -
@@ -1570,6 +1615,35 @@
         // labels directly on top of each other - flip Put Wall below
         // the line so they stay readable side by side.
         els.putWallLabel.classList.toggle('below-line', sameStrike);
+      };
+
+      // Countdown to when the current (still-forming) candle closes and
+      // the next one starts, positioned right under the chart's native
+      // last-price label. Reuses the same time-bucketing logic the price
+      // tick handler uses to build candles, so it always agrees with what
+      // the chart itself considers "now"'s candle.
+      panel.positionCandleTimer = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const history = panel.closeHistory;
+        if (!panel.intervalSeconds || !history || !history.length || panel.lastBarPrice == null) {
+          els.candleTimer.style.display = 'none';
+          return;
+        }
+
+        const currentBarTime = history[history.length - 1].time; // start of the still-forming candle, in seconds
+        const closeTime = currentBarTime + panel.intervalSeconds;
+        const remaining = Math.max(0, closeTime - Math.floor(Date.now() / 1000));
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        els.candleTimer.innerText = `${mins}:${String(secs).padStart(2, '0')}`;
+
+        const y = candlestickSeries.priceToCoordinate(panel.lastBarPrice);
+        if (y != null && y >= 0 && y <= height) {
+          els.candleTimer.style.display = 'block';
+          els.candleTimer.style.top = `${y + 10}px`; // sits just under the native price label box
+        } else {
+          els.candleTimer.style.display = 'none';
+        }
       };
 
       panel.refreshCallPutWalls = async function (expiration) {
@@ -1716,6 +1790,7 @@
             return { strike, c, p, cPct, pPct, isWallRow: strike === callWall || strike === putWall };
           });
           panel.positionStrikeOverlay();
+          panel.positionCandleTimer();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
           panel.strikeOverlayData = [];
@@ -1845,7 +1920,9 @@
         els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
         els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
         panel.updatePercentChange(panel.lastBarPrice);
+        panel.positionCandleTimer();
         panel.hasLoadedOnce = true;
+        saveChartSettings(panel);
 
         panel.sendWS({ type: 'subscribe_price', symbol });
 
@@ -1857,25 +1934,18 @@
           // Big Flow needs an options chain, which doesn't exist for
           // futures - without this, it silently errors in a loop (a
           // watch_big_flow request that can never succeed) every time a
-          // futures ticker loads with Big Flow left on from a stock.
+          // futures ticker loads right after a stock (where Big Flow is
+          // always on).
           if (panel.bigFlowEnabled) {
             panel.bigFlowEnabled = false;
             panel.sendWS({ type: 'unwatch_big_flow' });
           }
-          els.bigflowToggleBtn.disabled = true;
-          els.bigflowToggleBtn.innerText = 'Big Flow: N/A (futures)';
-          els.bigflowToggleBtn.classList.remove('active');
         } else {
-          els.bigflowToggleBtn.disabled = false;
-          els.bigflowToggleBtn.innerText = `Big Flow: ${panel.bigFlowEnabled ? 'On' : 'Off'}`;
-          els.bigflowToggleBtn.classList.toggle('active', panel.bigFlowEnabled);
-
-          // If big-flow was on for the previous ticker, re-point it at the
-          // new one - the server just overwrites the same tracked-contracts
-          // entry, no separate unwatch needed.
-          if (panel.bigFlowEnabled) {
-            panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
-          }
+          // Big Flow is always on for stocks now (no toggle) - re-point it
+          // at the new ticker on every load. The server just overwrites
+          // the same tracked-contracts entry, no separate unwatch needed.
+          panel.bigFlowEnabled = true;
+          panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
           panel.loadExpirationsDropdown();
         }
       };
@@ -1911,30 +1981,18 @@
         if (e.key === 'Enter') els.searchBtn.click();
       });
       els.timeframeSelect.addEventListener('change', (e) => {
-        const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
         panel.interval = e.target.value;
         panel.intervalSeconds = INTERVAL_SECONDS[panel.interval] || 60;
         // Full reload at the new timeframe - same symbol, but candles,
         // MAs, volume, and live-tick bucketing all need to reset to match.
         panel.loadInitialSeedData(panel.symbol);
+        saveChartSettings(panel);
       });
       els.expirationSelect.addEventListener('change', (e) => {
         els.flowList.innerHTML = '';
         panel.flowMarkers = [];
         candlestickSeries.setMarkers([]);
         panel.watchFlow(e.target.value);
-      });
-
-      els.bigflowToggleBtn.addEventListener('click', () => {
-        panel.bigFlowEnabled = !panel.bigFlowEnabled;
-        els.bigflowToggleBtn.innerText = `Big Flow: ${panel.bigFlowEnabled ? 'On' : 'Off'}`;
-        els.bigflowToggleBtn.classList.toggle('active', panel.bigFlowEnabled);
-
-        if (panel.bigFlowEnabled) {
-          panel.sendWS({ type: 'watch_big_flow', symbol: panel.symbol, spotPrice: panel.lastBarPrice });
-        } else {
-          panel.sendWS({ type: 'unwatch_big_flow' });
-        }
       });
 
       els.indicatorToggleBtn.addEventListener('click', () => {
@@ -1969,14 +2027,20 @@
         if (btn) panel.removeIndicator(btn.dataset.id);
       });
 
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); });
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); });
+
+      // Keeps the candle countdown ticking even during quiet stretches
+      // with no live trades - everything else here is only repositioned
+      // in response to a price tick, resize, or pan/zoom, but the
+      // countdown needs to advance once a second regardless.
+      setInterval(() => panel.positionCandleTimer(), 1000);
 
       // Panning/zooming the chart shifts the auto-scaled price range (and
       // therefore the price->pixel mapping) just as much as a live tick
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); });
 
       return panel;
     }
@@ -1986,7 +2050,12 @@
       createPanel(1, 'QQQ'),
     ];
 
-    panels.forEach((p) => p.loadInitialSeedData(p.symbol));
+    panels.forEach(async (p) => {
+      await p.loadInitialSeedData(p.symbol);
+      for (const ind of p.pendingIndicatorRestore) {
+        p.addIndicator(ind.type, ind.period, ind.lineStyle, ind.lineType);
+      }
+    });
 
     document.getElementById('layout-select').addEventListener('change', (e) => {
       const mode = e.target.value;
@@ -2053,11 +2122,29 @@
       }
     }
 
+    let leaderboardPollInterval = null;
+
+    function stopLeaderboardPolling() {
+      clearInterval(leaderboardPollInterval);
+      leaderboardPollInterval = null;
+    }
+
     document.getElementById('leaderboard-btn').addEventListener('click', () => {
       const panel = document.getElementById('leaderboard-panel');
       const opening = panel.classList.contains('hidden');
       panel.classList.toggle('hidden');
-      if (opening) loadLeaderboard();
+      if (opening) {
+        loadLeaderboard();
+        // Refresh every 30s while the panel stays open - underlying
+        // premium totals update live on the backend as trades stream in,
+        // this just keeps what's on screen from going stale without
+        // requiring a manual close/reopen. Stopped the moment the panel
+        // closes, so it's never polling in the background for no reason.
+        stopLeaderboardPolling();
+        leaderboardPollInterval = setInterval(loadLeaderboard, 30_000);
+      } else {
+        stopLeaderboardPolling();
+      }
     });
 
     document.getElementById('leaderboard-panel').addEventListener('click', (e) => {
@@ -2067,45 +2154,9 @@
       panels[0].els.tickerInput.value = symbol;
       panels[0].loadInitialSeedData(symbol);
       document.getElementById('leaderboard-panel').classList.add('hidden');
+      stopLeaderboardPolling();
     });
 
-    let premiumCheckInterval = null;
-    let premiumCheckSymbol = null;
-
-    async function checkPremium(symbol) {
-      const resultEl = document.getElementById('premium-check-result');
-      try {
-        const res = await fetch(`${BACKEND_HTTP}/api/premium?symbol=${encodeURIComponent(symbol)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
-
-        const putHeavy = data.put > data.call;
-        resultEl.innerHTML = `<span style="color:${putHeavy ? '#ff5252' : '#00c853'}; font-weight:600;">${data.symbol}</span> ` +
-          `Calls <span style="color:#00c853;">${formatPremiumTotal(data.call)}</span> ` +
-          `Puts <span style="color:#ff5252;">${formatPremiumTotal(data.put)}</span>` +
-          (data.newlyTracked ? ' <span style="color:#8fa0be;">(just started tracking)</span>' : '');
-      } catch (err) {
-        console.error('[premium check] failed:', err);
-        resultEl.innerText = 'Failed to check';
-      }
-    }
-
-    function startPremiumCheck(symbol) {
-      if (premiumCheckInterval) clearInterval(premiumCheckInterval);
-      premiumCheckSymbol = symbol;
-      document.getElementById('premium-check-result').innerText = 'Checking...';
-      checkPremium(symbol);
-      premiumCheckInterval = setInterval(() => checkPremium(symbol), 20_000);
-    }
-
-    document.getElementById('premium-check-btn').addEventListener('click', () => {
-      const symbol = document.getElementById('premium-check-input').value.trim().toUpperCase();
-      if (symbol) startPremiumCheck(symbol);
-    });
-
-    document.getElementById('premium-check-input').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') document.getElementById('premium-check-btn').click();
-    });
   </script>
 </body>
 </html>
