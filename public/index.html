@@ -434,6 +434,8 @@
       border-radius: 8px;
       padding: 10px;
       min-width: 220px;
+      max-width: calc(100vw - 16px);
+      box-sizing: border-box;
     }
 
     .indicator-panel.hidden {
@@ -758,11 +760,11 @@
         <div class="indicator-panel hidden">
           <label class="sr-toggle-row">
             <input type="checkbox" class="sr-toggle-checkbox" checked />
-            Support/Resistance Levels
+            Support/Resistance
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
-            Volume Profile (Strikes)
+            Volume Profile
           </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
@@ -834,11 +836,11 @@
         <div class="indicator-panel hidden">
           <label class="sr-toggle-row">
             <input type="checkbox" class="sr-toggle-checkbox" checked />
-            Support/Resistance Levels
+            Support/Resistance
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
-            Volume Profile (Strikes)
+            Volume Profile
           </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
@@ -2211,9 +2213,24 @@
         panel.watchFlow(e.target.value);
       });
 
+      panel.clampIndicatorPanelPosition = function () {
+        els.indicatorPanel.style.transform = 'translateX(-50%)';
+        const margin = 8;
+        const rect = els.indicatorPanel.getBoundingClientRect();
+        let shift = 0;
+        if (rect.left < margin) shift = margin - rect.left;
+        else if (rect.right > window.innerWidth - margin) shift = (window.innerWidth - margin) - rect.right;
+        if (shift !== 0) els.indicatorPanel.style.transform = `translateX(calc(-50% + ${shift}px))`;
+      };
+
       els.indicatorToggleBtn.addEventListener('click', () => {
+        const opening = els.indicatorPanel.classList.contains('hidden');
         els.indicatorPanel.classList.toggle('hidden');
-        els.indicatorToggleBtn.classList.toggle('active', !els.indicatorPanel.classList.contains('hidden'));
+        els.indicatorToggleBtn.classList.toggle('active', opening);
+        // On a narrow (phone) screen the centered panel can extend past
+        // the left or right edge of the viewport and become unreachable -
+        // nudge it back on-screen with a horizontal offset if it does.
+        if (opening) panel.clampIndicatorPanelPosition();
       });
 
       els.srToggleCheckbox.addEventListener('change', () => {
@@ -2255,7 +2272,14 @@
         if (btn) panel.removeIndicator(btn.dataset.id);
       });
 
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); });
+      window.addEventListener('resize', () => {
+        panel.centerLastCandle();
+        panel.positionWallLabels();
+        panel.positionStrikeOverlay();
+        panel.positionCandleTimer();
+        panel.positionSRLabels();
+        if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
+      });
 
       // Keeps the candle countdown ticking even during quiet stretches
       // with no live trades - everything else here is only repositioned
