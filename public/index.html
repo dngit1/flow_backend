@@ -424,9 +424,10 @@
 
     .indicator-panel {
       position: absolute;
-      top: 0;
-      left: 100%;
-      margin-left: 6px;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 6px;
       z-index: 50;
       background-color: #131822;
       border: 1px solid #1f293d;
@@ -669,18 +670,17 @@
 
     .candle-timer {
       position: absolute;
-      right: 4px;
-      transform: translateY(2px); /* sits just below the native price label box */
+      right: 0;
       z-index: 15;
-      padding: 1px 6px;
-      border-radius: 3px;
+      padding: 1px 8px;
+      border-radius: 0 0 3px 3px; /* only bottom corners rounded, so the top edge sits flush against the native price label above it */
       font-size: 10px;
-      font-weight: 600;
+      font-weight: 700;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
+      text-align: center;
       pointer-events: none;
-      background-color: rgba(19, 23, 34, 0.85);
-      color: #8fa0be;
+      color: #ffffff;
       display: none;
     }
 
@@ -1699,10 +1699,15 @@
         const secs = remaining % 60;
         els.candleTimer.innerText = `${mins}:${String(secs).padStart(2, '0')}`;
 
+        const bars = candlestickSeries.data();
+        const lastBar = bars[bars.length - 1];
+        const isUp = lastBar ? panel.lastBarPrice >= lastBar.open : true;
+        els.candleTimer.style.backgroundColor = isUp ? '#00c853' : '#ff5252';
+
         const y = candlestickSeries.priceToCoordinate(panel.lastBarPrice);
         if (y != null && y >= 0 && y <= height) {
           els.candleTimer.style.display = 'block';
-          els.candleTimer.style.top = `${y + 10}px`; // sits just under the native price label box
+          els.candleTimer.style.top = `${y + 9}px`; // flush against the bottom edge of the native price label box, so the color reads as one continuous block
         } else {
           els.candleTimer.style.display = 'none';
         }
