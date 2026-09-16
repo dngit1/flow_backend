@@ -646,6 +646,27 @@
       color: #00c853;
     }
 
+    .sr-label {
+      position: absolute;
+      left: 50%;
+      transform: translate(-50%, -100%);
+      z-index: 14;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .sr-label.resistance-label {
+      color: #ff5252;
+    }
+
+    .sr-label.support-label {
+      color: #00c853;
+    }
+
     .candle-timer {
       position: absolute;
       right: 4px;
@@ -682,7 +703,7 @@
       <option value="1">1 Window</option>
     </select>
 
-    <label><strong>Min chart marker:</strong></label>
+    <label><strong>Stock - Min On Chart:</strong></label>
     <select id="marker-floor-select">
       <option value="0">Show all</option>
       <option value="10000">$10k+</option>
@@ -694,7 +715,7 @@
       <option value="1000000">$1M+</option>
     </select>
 
-    <label><strong>Futures Min Chart Marker:</strong></label>
+    <label><strong>Future - Min On Chart:</strong></label>
     <select id="futures-marker-floor-select">
       <option value="2000000">$2M+</option>
       <option value="4000000">$4M+</option>
@@ -703,7 +724,7 @@
       <option value="10000000">$10M+</option>
     </select>
 
-    <button id="leaderboard-btn" class="leaderboard-btn">Premium Leaderboard</button>
+    <button id="leaderboard-btn" class="leaderboard-btn">Top Premium</button>
     <div id="leaderboard-panel" class="leaderboard-panel hidden">
       <h4>Top Option Premium Today</h4>
       <div class="leaderboard-header">
@@ -732,10 +753,6 @@
         <option value="1h">1H</option>
         <option value="1day">1D</option>
       </select>
-      <label><strong>EXP:</strong></label>
-      <select class="expiration-select" disabled>
-        <option value="">Loading...</option>
-      </select>
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
@@ -762,6 +779,10 @@
           <div class="indicator-list">No indicators added</div>
         </div>
       </div>
+      <label><strong>EXP:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -781,6 +802,7 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
+        <div class="sr-label-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Flow</div>
@@ -803,10 +825,6 @@
         <option value="1h">1H</option>
         <option value="1day">1D</option>
       </select>
-      <label><strong>EXP:</strong></label>
-      <select class="expiration-select" disabled>
-        <option value="">Loading...</option>
-      </select>
       <div class="indicator-wrap">
         <button class="indicator-toggle-btn">Indicators</button>
         <div class="indicator-panel hidden">
@@ -833,6 +851,10 @@
           <div class="indicator-list">No indicators added</div>
         </div>
       </div>
+      <label><strong>EXP:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
     </div>
     <div class="main-layout">
       <div class="chart-wrapper">
@@ -852,6 +874,7 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
+        <div class="sr-label-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Flow</div>
@@ -1058,6 +1081,7 @@
         chartErrorBanner: root.querySelector('.chart-error-banner'),
         flowList: root.querySelector('.flow-list'),
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
+        srLabelContainer: root.querySelector('.sr-label-container'),
         callWallLabel: root.querySelector('.call-wall-label'),
         putWallLabel: root.querySelector('.put-wall-label'),
         candleTimer: root.querySelector('.candle-timer'),
@@ -1140,6 +1164,7 @@
         pendingWatchExpiration: null,
         pendingIndicatorRestore: saved?.indicators || [],
         srLines: [], // currently-drawn support/resistance price lines - cleared and redrawn on each recompute
+        srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
         chart,
         candlestickSeries,
@@ -1518,6 +1543,7 @@
         panel.positionWallLabels();
         panel.positionStrikeOverlay();
         panel.positionCandleTimer();
+        panel.positionSRLabels();
       };
 
       panel.callWallLine = null;
@@ -1688,11 +1714,13 @@
       // below current price as dashed price lines. Called once per new
       // candle (see the price-tick handler) rather than every tick.
       panel.computeAndDrawSupportResistance = function () {
-        // Old lines first, always - if this is a toggle-off, that alone
-        // is the whole job; if it's a normal recompute, stale lines
+        // Old lines/labels first, always - if this is a toggle-off, that
+        // alone is the whole job; if it's a normal recompute, stale ones
         // shouldn't linger underneath the new ones anyway.
         for (const line of panel.srLines) candlestickSeries.removePriceLine(line);
         panel.srLines = [];
+        els.srLabelContainer.innerHTML = '';
+        panel.srLevels = [];
         if (!panel.srEnabled) return;
 
         const allBars = candlestickSeries.data();
@@ -1766,9 +1794,13 @@
             color: '#ff5252',
             lineWidth: 1,
             lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: `R${i + 1}`,
+            axisLabelVisible: false,
           }));
+          const labelEl = document.createElement('div');
+          labelEl.className = 'sr-label resistance-label';
+          labelEl.innerText = `R${i + 1}`;
+          els.srLabelContainer.appendChild(labelEl);
+          panel.srLevels.push({ price: c.price, el: labelEl });
         });
 
         supportCandidates.forEach((c, i) => {
@@ -1777,10 +1809,33 @@
             color: '#00c853',
             lineWidth: 1,
             lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: `S${i + 1}`,
+            axisLabelVisible: false,
           }));
+          const labelEl = document.createElement('div');
+          labelEl.className = 'sr-label support-label';
+          labelEl.innerText = `S${i + 1}`;
+          els.srLabelContainer.appendChild(labelEl);
+          panel.srLevels.push({ price: c.price, el: labelEl });
         });
+
+        panel.positionSRLabels();
+      };
+
+      // Repositions the floating R1/R2/S1/S2 labels to sit right on top of
+      // their line - called after every recompute, and on every price
+      // tick/resize/pan/zoom since the line's Y pixel position shifts with
+      // all of those even though the price level itself hasn't changed.
+      panel.positionSRLabels = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        for (const level of panel.srLevels) {
+          const y = candlestickSeries.priceToCoordinate(level.price);
+          if (y != null && y >= 0 && y <= height) {
+            level.el.style.display = 'block';
+            level.el.style.top = `${y}px`;
+          } else {
+            level.el.style.display = 'none'; // off-screen (scrolled/zoomed away)
+          }
+        }
       };
 
       panel.refreshCallPutWalls = async function (expiration) {
@@ -1928,6 +1983,7 @@
           });
           panel.positionStrikeOverlay();
           panel.positionCandleTimer();
+          panel.positionSRLabels();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
           panel.strikeOverlayData = [];
@@ -2171,7 +2227,7 @@
         if (btn) panel.removeIndicator(btn.dataset.id);
       });
 
-      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); });
+      window.addEventListener('resize', () => { panel.centerLastCandle(); panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); });
 
       // Keeps the candle countdown ticking even during quiet stretches
       // with no live trades - everything else here is only repositioned
@@ -2184,7 +2240,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); });
 
       return panel;
     }
