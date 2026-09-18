@@ -904,7 +904,7 @@
     let FUTURES_CHART_MARKER_FLOOR = 8_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
-    const MARKER_SIZE = 3; // larger = bigger arrow + further from the candle body (single control, linked together)
+    const MARKER_SIZE = 2; // larger = bigger arrow + further from the candle body (single control, linked together)
     const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
     const BIG_FLOW_THRESHOLD_OTHER = 150000; // everything else - thinner chains mean a $250k single print is comparatively rare, so this stays lower to actually surface activity
     const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
@@ -1194,6 +1194,7 @@
         flowMarkers: [],
         lastBarTime: null,
         lastBarPrice: 0,
+        currentBarVolume: 0,
         lastBarOpen: 0,
         els,
         ws: null,
@@ -1229,7 +1230,7 @@
           if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
 
           if (msg.type === 'price' && msg.symbol === panel.symbol) {
-            panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low);
+            panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low, msg.size, msg.volume);
           } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
             const bigFlowThreshold = BIG_FLOW_MAJOR_SYMBOLS.has(panel.symbol) ? BIG_FLOW_THRESHOLD_MAJOR : BIG_FLOW_THRESHOLD_OTHER;
             if (msg.premium < bigFlowThreshold) return;
@@ -1254,7 +1255,7 @@
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
-          } else if (msg.type === 'alpaca_status') {
+          } else if (msg.type === 'price_feed_status') {
             if (isFuturesTicker(panel.symbol)) return;
             if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
@@ -1474,7 +1475,7 @@
         candlestickSeries.setMarkers(panel.flowMarkers);
       };
 
-      panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow) {
+      panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow, tradeSize, aggVolume) {
         // Defensive guard - a crash here (tradePrice not a real number)
         // was observed in practice and its exact cause isn't confirmed
         // yet. This stops it from breaking the whole tick (which was
@@ -1496,7 +1497,7 @@
         // Futures aggregates arrive as a complete already-formed bar (its
         // own real open/high/low), not a single raw trade - using those
         // directly avoids plotting a flat, zero-range sliver where the
-        // bar's actual range should be. Stocks (raw ticks via Alpaca)
+        // bar's actual range should be. Stocks (raw ticks via Finnhub)
         // don't pass these, so they keep synthesizing range from
         // individual tick comparisons as before.
         const hasAggregateRange = aggHigh != null && aggLow != null;
@@ -1506,8 +1507,18 @@
           panel.lastBarOpen = hasAggregateRange && aggOpen != null ? aggOpen : tradePrice;
           panel.currentBarHigh = hasAggregateRange ? aggHigh : tradePrice;
           panel.currentBarLow = hasAggregateRange ? aggLow : tradePrice;
+          // New candle - volume starts fresh. An Aggregates message
+          // carries the bar's own authoritative running total (use it
+          // directly); a raw trade tick only knows about itself, so start
+          // the accumulator at this one trade's size.
+          panel.currentBarVolume = aggVolume != null ? aggVolume : (tradeSize || 0);
           candlestickSeries.update({
             time: currentMinuteBucket, open: panel.lastBarOpen, high: panel.currentBarHigh, low: panel.currentBarLow, close: tradePrice,
+          });
+          volumeSeries.update({
+            time: currentMinuteBucket,
+            value: panel.currentBarVolume,
+            color: tradePrice >= panel.lastBarOpen ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
           });
           panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
           panel.computeAndDrawSupportResistance();
@@ -1518,12 +1529,21 @@
           // since most consecutive ticks don't move much on their own.
           panel.currentBarHigh = Math.max(panel.currentBarHigh, hasAggregateRange ? aggHigh : tradePrice);
           panel.currentBarLow = Math.min(panel.currentBarLow, hasAggregateRange ? aggLow : tradePrice);
+          // Same as above: an Aggregates snapshot REPLACES the running
+          // total (it already reflects everything up to now), a raw trade
+          // tick only ever ADDS its own size to what's already there.
+          panel.currentBarVolume = aggVolume != null ? aggVolume : (panel.currentBarVolume || 0) + (tradeSize || 0);
           candlestickSeries.update({
             time: panel.lastBarTime,
             open: panel.lastBarOpen,
             high: panel.currentBarHigh,
             low: panel.currentBarLow,
             close: tradePrice,
+          });
+          volumeSeries.update({
+            time: panel.lastBarTime,
+            value: panel.currentBarVolume,
+            color: tradePrice >= panel.lastBarOpen ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
           });
           if (panel.closeHistory.length > 0) {
             panel.closeHistory[panel.closeHistory.length - 1].close = tradePrice;
@@ -2133,6 +2153,7 @@
         panel.lastBarOpen = last.open;
         panel.currentBarHigh = last.high;
         panel.currentBarLow = last.low;
+        panel.currentBarVolume = last.volume || 0;
 
         els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
         els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
@@ -2297,6 +2318,7 @@
       return panel;
     }
 
+    function initApp() {
     const panels = [
       createPanel(0, 'SPY'),
       createPanel(1, 'QQQ'),
@@ -2409,6 +2431,9 @@
       stopLeaderboardPolling();
     });
 
+    } // end initApp
+
+    initApp();
   </script>
 </body>
 </html>
