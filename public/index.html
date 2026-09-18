@@ -26,6 +26,7 @@
       background-color: #0b0e14;
       border-bottom: 1px solid #1f293d;
       flex-shrink: 0;
+      flex-wrap: wrap;
     }
 
     .global-bar select {
@@ -116,12 +117,17 @@
     }
 
     .leaderboard-symbol {
-      flex: 1;
       font-weight: 600;
     }
 
     .leaderboard-symbol.call-heavy { color: #00c853; }
     .leaderboard-symbol.put-heavy { color: #ff5252; }
+
+    .leaderboard-pct {
+      flex: 1;
+      font-size: 11px;
+      font-weight: 600;
+    }
 
     .leaderboard-call {
       color: #00c853;
@@ -2483,9 +2489,16 @@
 
     function leaderboardItemHtml(entry, rank) {
       const putHeavy = entry.put > entry.call;
+      const pct = entry.percentChange;
+      // Always rendered (even empty) - its flex:1 is what keeps Call/Put
+      // right-aligned consistently, whether or not this symbol has a
+      // percent change value available.
+      const pctText = pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '';
+      const pctColor = pct != null ? (pct >= 0 ? '#00c853' : '#ff5252') : 'transparent';
       return `<div class="leaderboard-item" data-symbol="${entry.symbol}">` +
         `<span class="leaderboard-rank">${rank}</span>` +
         `<span class="leaderboard-symbol ${putHeavy ? 'put-heavy' : 'call-heavy'}">${entry.symbol}</span>` +
+        `<span class="leaderboard-pct" style="color: ${pctColor};">${pctText}</span>` +
         `<span class="leaderboard-call">${formatPremiumTotal(entry.call)}</span>` +
         `<span class="leaderboard-put">${formatPremiumTotal(entry.put)}</span>` +
         `</div>`;
