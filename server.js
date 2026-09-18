@@ -11,6 +11,7 @@ const { createTradierHub } = require('./lib/tradierHub');
 const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
 const { createFlowBuffer } = require('./lib/flowBuffer');
+const cache = require('./lib/cache');
 // NOTE: auth (lib/auth.js, lib/mailer.js) is intentionally NOT wired in
 // here - this is the deploy-now version, auth requires a working
 // Postgres + Google OAuth setup that hasn't been done yet. The
@@ -177,8 +178,40 @@ app.use('/api', createDataProxyRouter({
 // GET /api/premium-leaderboard - curated-symbol ranking by cumulative
 // option premium traded today. See tradierHub.js for the curated list
 // and the "no full-market scan" limitation.
-app.get('/api/premium-leaderboard', (req, res) => {
-  res.json(tradierHub.getLeaderboard());
+app.get('/api/premium-leaderboard', async (req, res) => {
+  const leaderboard = tradierHub.getLeaderboard();
+  if (!leaderboard.ready || !leaderboard.rankings.length) return res.json(leaderboard);
+
+  // Attach each ranked symbol's daily % change - only fetched for the
+  // (already top-10-limited) ranked symbols, not the full curated list,
+  // and cached briefly so refreshing the panel every 30s (see the
+  // frontend's leaderboard poll) doesn't multiply Twelve Data usage.
+  try {
+    const symbols = leaderboard.rankings.map((r) => r.symbol);
+    const changes = await cache.cached(`leaderboard-changes:${symbols.join(',')}`, 30_000, async () => {
+      const url = `https://api.twelvedata.com/quote?symbol=${symbols.join(',')}&apikey=${TWELVE_DATA_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      // Twelve Data's batch response is keyed by symbol when MULTIPLE
+      // symbols are requested; a single-symbol request instead returns
+      // one flat object - normalize both shapes to the same lookup.
+      const quotes = symbols.length > 1 ? data : { [symbols[0]]: data };
+      const result = {};
+      for (const sym of symbols) {
+        const pct = quotes[sym]?.percent_change;
+        result[sym] = pct != null ? parseFloat(pct) : null;
+      }
+      return result;
+    });
+
+    leaderboard.rankings = leaderboard.rankings.map((r) => ({ ...r, percentChange: changes[r.symbol] ?? null }));
+  } catch (err) {
+    console.error('[dataProxy] leaderboard percent-change fetch failed:', err.message);
+    // Fall back to the leaderboard without percentChange rather than
+    // failing the whole panel over this one extra field.
+  }
+
+  res.json(leaderboard);
 });
 
 // GET /api/premium?symbol=XYZ - on-demand call/put premium tracking for
