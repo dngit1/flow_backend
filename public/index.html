@@ -353,7 +353,7 @@
       }
 
       .chart-wrapper {
-        min-height: 260px;
+        min-height: 480px; /* room for 4 stacked panes (price, volume, RSI, MACD) without cramping any of them */
         min-width: 0;
       }
 
@@ -767,6 +767,10 @@
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
           </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="macd-toggle-checkbox" checked />
+            MACD
+          </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
               <option value="MA">MA</option>
@@ -842,6 +846,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="macd-toggle-checkbox" checked />
+            MACD
           </label>
           <div class="indicator-add-row">
             <select class="indicator-type-select">
@@ -948,6 +956,7 @@
           interval: panel.interval,
           srEnabled: panel.srEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
+          macdEnabled: panel.macdEnabled,
           indicators: panel.indicators.map((ind) => ({
             type: ind.type,
             period: ind.period,
@@ -1130,6 +1139,7 @@
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled !== false; // default on; only off if explicitly saved as off
+      const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
@@ -1158,6 +1168,7 @@
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
+        macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -1169,6 +1180,7 @@
       els.timeframeSelect.value = initialInterval;
       els.srToggleCheckbox.checked = initialSrEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
+      els.macdToggleCheckbox.checked = initialMacdEnabled;
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
@@ -1259,6 +1271,7 @@
         srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
         volumeProfileEnabled: initialVolumeProfileEnabled,
+        macdEnabled: initialMacdEnabled,
         chart,
         candlestickSeries,
         volumeSeries,
@@ -1651,10 +1664,7 @@
           }
         });
         rsiSeries.setData(computeRSI(hist, RSI_PERIOD));
-        const macd = computeMACD(hist, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
-        macdHistSeries.setData(macd.histogram);
-        macdLineSeries.setData(macd.macdLine);
-        macdSignalSeries.setData(macd.signalLine);
+        panel.updateMacd(hist);
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
@@ -1801,6 +1811,22 @@
         // labels directly on top of each other - flip Put Wall below
         // the line so they stay readable side by side.
         els.putWallLabel.classList.toggle('below-line', sameStrike);
+      };
+
+      // Recomputes and sets MACD data from the given bars, or clears all
+      // three series when the toggle is off - single place both the
+      // recompute call sites and the toggle checkbox go through.
+      panel.updateMacd = function (bars) {
+        if (!panel.macdEnabled) {
+          macdHistSeries.setData([]);
+          macdLineSeries.setData([]);
+          macdSignalSeries.setData([]);
+          return;
+        }
+        const macd = computeMACD(bars, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
+        macdHistSeries.setData(macd.histogram);
+        macdLineSeries.setData(macd.macdLine);
+        macdSignalSeries.setData(macd.signalLine);
       };
 
       // Countdown to when the current (still-forming) candle closes and
@@ -2205,9 +2231,7 @@
           candlestickSeries.setData([]);
           volumeSeries.setData([]);
           rsiSeries.setData([]);
-          macdHistSeries.setData([]);
-          macdLineSeries.setData([]);
-          macdSignalSeries.setData([]);
+          panel.updateMacd([]);
           panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; });
           panel.closeHistory = [];
           panel.symbol = previousSymbol;
@@ -2223,10 +2247,7 @@
           })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
           rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
-          const macd = computeMACD(seedCandles, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
-          macdHistSeries.setData(macd.histogram);
-          macdLineSeries.setData(macd.macdLine);
-          macdSignalSeries.setData(macd.signalLine);
+          panel.updateMacd(seedCandles);
           // Recompute whatever indicators the user has added, against
           // this (possibly new) symbol's fresh data - the user's chosen
           // set persists across ticker switches, just recalculated.
@@ -2355,6 +2376,12 @@
       els.volumeProfileToggleCheckbox.addEventListener('change', () => {
         panel.volumeProfileEnabled = els.volumeProfileToggleCheckbox.checked;
         panel.positionStrikeOverlay();
+        saveChartSettings(panel);
+      });
+
+      els.macdToggleCheckbox.addEventListener('change', () => {
+        panel.macdEnabled = els.macdToggleCheckbox.checked;
+        panel.updateMacd(panel.closeHistory);
         saveChartSettings(panel);
       });
 
