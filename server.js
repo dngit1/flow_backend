@@ -5,24 +5,49 @@ const crypto = require('crypto');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 
-const { createAlpacaHub } = require('./lib/alpacaHub');
+const { createFinnhubHub } = require('./lib/finnhubHub');
+const { createAlpacaHub } = require('./lib/alpacaHub'); // kept as a fallback - see STOCK_DATA_PROVIDER below
 const { createTradierHub } = require('./lib/tradierHub');
 const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
 const { createFlowBuffer } = require('./lib/flowBuffer');
+// NOTE: auth (lib/auth.js, lib/mailer.js) is intentionally NOT wired in
+// here - this is the deploy-now version, auth requires a working
+// Postgres + Google OAuth setup that hasn't been done yet. The
+// auth-complete version of this file is preserved separately; see
+// server-with-auth.js for reintegration once that setup is ready.
 
 const {
+  FINNHUB_API_KEY,
   ALPACA_KEY,
   ALPACA_SECRET,
   TWELVE_DATA_KEY,
   TRADIER_TOKEN,
   MASSIVE_API_KEY,
+  // Which live stock data provider to use - 'finnhub' (default, free,
+  // no brokerage account) or 'alpaca' (kept as a fallback; requires
+  // ALPACA_KEY + ALPACA_SECRET and a working brokerage login - see the
+  // git history around the Alpaca MFA lockout for why this defaulted
+  // away from Alpaca). Flip back by setting this env var - no code
+  // change or redeploy-of-different-code needed, both hubs ship in
+  // every deploy either way.
+  STOCK_DATA_PROVIDER = 'finnhub',
   PORT = 3000,
 } = process.env;
 
-for (const [name, val] of Object.entries({ ALPACA_KEY, ALPACA_SECRET, TWELVE_DATA_KEY, TRADIER_TOKEN, MASSIVE_API_KEY })) {
+const usingAlpaca = STOCK_DATA_PROVIDER === 'alpaca';
+
+const requiredEnvVars = { TWELVE_DATA_KEY, TRADIER_TOKEN, MASSIVE_API_KEY };
+if (usingAlpaca) {
+  requiredEnvVars.ALPACA_KEY = ALPACA_KEY;
+  requiredEnvVars.ALPACA_SECRET = ALPACA_SECRET;
+} else {
+  requiredEnvVars.FINNHUB_API_KEY = FINNHUB_API_KEY;
+}
+for (const [name, val] of Object.entries(requiredEnvVars)) {
   if (!val) console.warn(`[startup] Warning: ${name} is not set - check your .env file`);
 }
+console.log(`[startup] Stock data provider: ${STOCK_DATA_PROVIDER}`);
 
 const app = express();
 // Allow the frontend to call this backend from any origin (localhost file,
@@ -59,7 +84,7 @@ function sendToClient(clientId, message) {
 
 function broadcastPrice(symbol, payload) {
   // Every client currently subscribed to this symbol gets the tick.
-  // (Reconciliation of "who wants what" happens in alpacaHub; here we just
+  // (Reconciliation of "who wants what" happens in stockHub; here we just
   // fan out to any client whose active symbol matches.)
   for (const [clientId, ws] of browserClients) {
     if (ws.readyState === WebSocket.OPEN && ws.watchedSymbol === symbol) {
@@ -81,7 +106,7 @@ function broadcastStockFlow(symbol, payload) {
 // get broadcast to every watching client, which is far too much traffic.
 const STOCK_BLOCK_TRADE_THRESHOLD = 1_000_000; // dollar value
 
-let currentAlpacaStatus = { status: 'disconnected', detail: null };
+let currentStockFeedStatus = { status: 'disconnected', detail: null };
 
 // Shared rolling buffer of recent flow events (option flow, big flow, and
 // stock/futures share-flow all record into this) so a refreshed page or a
@@ -90,11 +115,12 @@ let currentAlpacaStatus = { status: 'disconnected', detail: null };
 // see lib/flowBuffer.js for the tradeoffs of this approach.
 const flowBuffer = createFlowBuffer();
 
-const alpacaHub = createAlpacaHub({
-  apiKey: ALPACA_KEY,
-  apiSecret: ALPACA_SECRET,
+const createStockHub = usingAlpaca ? createAlpacaHub : createFinnhubHub;
+const stockHub = createStockHub({
+  apiKey: usingAlpaca ? ALPACA_KEY : FINNHUB_API_KEY,
+  apiSecret: ALPACA_SECRET, // only read by createAlpacaHub - createFinnhubHub ignores extra fields it doesn't destructure
   onTrade: ({ symbol, price, size, prevPrice, bid, ask, timeMs }) => {
-    broadcastPrice(symbol, { price, timeMs });
+    broadcastPrice(symbol, { price, size, timeMs });
 
     const dollarValue = price * (size || 0);
     if (dollarValue >= STOCK_BLOCK_TRADE_THRESHOLD) {
@@ -119,9 +145,9 @@ const alpacaHub = createAlpacaHub({
     }
   },
   onStatus: (status, detail) => {
-    currentAlpacaStatus = { status, detail };
+    currentStockFeedStatus = { status, detail };
     for (const ws of browserClients.values()) {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'alpaca_status', status, detail }));
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'price_feed_status', status, detail }));
     }
   },
 });
@@ -144,7 +170,7 @@ const futuresHub = createFuturesHub({
 app.use('/api', createDataProxyRouter({
   twelveDataKey: TWELVE_DATA_KEY,
   tradierToken: TRADIER_TOKEN,
-  lastPriceOf: (symbol) => alpacaHub.lastPriceOf(symbol),
+  lastPriceOf: (symbol) => stockHub.lastPriceOf(symbol),
   futuresHub,
 }));
 
@@ -164,7 +190,7 @@ app.get('/api/premium', async (req, res) => {
   if (!symbol) return res.status(400).json({ error: 'symbol is required' });
 
   try {
-    const spotPrice = alpacaHub.lastPriceOf(symbol) || null;
+    const spotPrice = stockHub.lastPriceOf(symbol) || null;
     const result = await tradierHub.trackSymbol(symbol, spotPrice);
     res.json(result);
   } catch (err) {
@@ -193,32 +219,32 @@ wss.on('connection', (ws) => {
 
   // Tell this new client the CURRENT status right away - onStatus above
   // only fires on future changes, so without this, anyone who connects
-  // after the upstream Alpaca connection already succeeded would never
+  // after the upstream connection already succeeded would never
   // hear about it and stay stuck showing "Connecting..." forever.
-  ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
+  ws.send(JSON.stringify({ type: 'price_feed_status', status: currentStockFeedStatus.status, detail: currentStockFeedStatus.detail }));
 
   ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch (e) { return; }
 
-    // ---- price subscription (Alpaca for stocks, Massive for futures) ----
+    // ---- price subscription (Finnhub for stocks, Massive for futures) ----
     if (msg.type === 'subscribe_price' && msg.symbol) {
       const symbol = msg.symbol.toUpperCase();
       if (ws.watchedSymbol) {
         if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-        else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+        else stockHub.unsubscribe(clientId, ws.watchedSymbol);
       }
       ws.watchedSymbol = symbol;
       if (isFuturesTicker(symbol)) {
         futuresHub.subscribe(clientId, symbol);
       } else {
-        alpacaHub.subscribe(clientId, symbol);
+        stockHub.subscribe(clientId, symbol);
         // Re-confirm the CURRENT status directly to this client - not just
         // a broadcast on future changes. Without this, a client whose badge
         // got stuck on an unrelated error (e.g. a failed load for a
         // different symbol) never gets corrected back to the true state,
         // since a successful load intentionally doesn't touch the badge.
-        ws.send(JSON.stringify({ type: 'alpaca_status', status: currentAlpacaStatus.status, detail: currentAlpacaStatus.detail }));
+        ws.send(JSON.stringify({ type: 'price_feed_status', status: currentStockFeedStatus.status, detail: currentStockFeedStatus.detail }));
       }
       // Replay recent stock/futures share-flow history for this symbol,
       // same "don't start blank" treatment as option flow gets.
@@ -231,7 +257,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'unsubscribe_price') {
       if (ws.watchedSymbol) {
         if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-        else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+        else stockHub.unsubscribe(clientId, ws.watchedSymbol);
       }
       ws.watchedSymbol = null;
       return;
@@ -246,7 +272,7 @@ wss.on('connection', (ws) => {
         // exact moment (a timing race after reconnects/resubscribes),
         // which previously caused near-the-money strikes to silently fall
         // back to an arbitrary, unrelated strike.
-        const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
+        const spotPrice = msg.spotPrice || stockHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
         const { count, history } = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
         // Replay recent history oldest-first, so the frontend's prepend
         // logic ends up with newest-on-top, same as if these had arrived
@@ -268,7 +294,7 @@ wss.on('connection', (ws) => {
     // at once instead of just the one selected in the normal dropdown.
     if (msg.type === 'watch_big_flow' && msg.symbol) {
       try {
-        const spotPrice = msg.spotPrice || alpacaHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
+        const spotPrice = msg.spotPrice || stockHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
         const { count, history } = await tradierHub.watchBigFlow(clientId, msg.symbol.toUpperCase(), spotPrice);
         history.forEach((event) => sendToClient(clientId, { type: 'flow', ...event }));
         sendToClient(clientId, { type: 'big_flow_watching', symbol: msg.symbol, contractCount: count });
@@ -287,7 +313,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     if (ws.watchedSymbol) {
       if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-      else alpacaHub.unsubscribe(clientId, ws.watchedSymbol);
+      else stockHub.unsubscribe(clientId, ws.watchedSymbol);
     }
     tradierHub.unwatch(clientId);
     tradierHub.unwatchBigFlow(clientId);
@@ -297,7 +323,7 @@ wss.on('connection', (ws) => {
 
 // Some network drops (proxy timeouts, laptop sleep, etc.) never send a
 // proper close frame, which would otherwise leave a "zombie" subscription
-// behind - still registered with alpacaHub/tradierHub and still receiving
+// behind - still registered with stockHub/tradierHub and still receiving
 // (and duplicating) broadcasts, even though nothing is really listening.
 // This sweep pings every client every 30s; anyone that didn't respond to
 // the PREVIOUS ping gets forcibly terminated, which fires the 'close'
