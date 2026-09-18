@@ -1073,6 +1073,56 @@
       return points;
     }
 
+    // Standard MACD: MACD line = EMA(fast) - EMA(slow) of close price,
+    // signal = EMA(signal) of the MACD line itself, histogram = MACD
+    // line minus signal. Needs slowPeriod + signalPeriod bars just to
+    // produce the first histogram point, same "starts partway into the
+    // visible history" tradeoff as RSI above.
+    function computeMACD(bars, fastPeriod, slowPeriod, signalPeriod) {
+      if (bars.length < slowPeriod + signalPeriod) return { macdLine: [], signalLine: [], histogram: [] };
+
+      // EMA over a plain array of numbers (not bars with .close), so this
+      // can run a second time over the MACD line itself for the signal.
+      function emaOfValues(values, period) {
+        const multiplier = 2 / (period + 1);
+        let sum = 0;
+        for (let i = 0; i < period; i++) sum += values[i];
+        let ema = sum / period;
+        const out = [ema];
+        for (let i = period; i < values.length; i++) {
+          ema = (values[i] - ema) * multiplier + ema;
+          out.push(ema);
+        }
+        return out; // out[k] corresponds to values[period - 1 + k]
+      }
+
+      const closes = bars.map((b) => b.close);
+      const emaFastAll = emaOfValues(closes, fastPeriod); // starts at bars[fastPeriod - 1]
+      const emaSlowAll = emaOfValues(closes, slowPeriod); // starts at bars[slowPeriod - 1]
+
+      // Slow EMA starts later than fast - align them to the point where
+      // BOTH exist, which is exactly where the slow one starts.
+      const offset = slowPeriod - fastPeriod;
+      const macdValues = emaSlowAll.map((slowVal, i) => emaFastAll[i + offset] - slowVal);
+      const macdTimes = bars.slice(slowPeriod - 1).map((b) => b.time);
+
+      const signalValues = emaOfValues(macdValues, signalPeriod);
+      const signalTimes = macdTimes.slice(signalPeriod - 1);
+
+      const macdLine = macdTimes.map((t, i) => ({ time: t, value: macdValues[i] }));
+      const signalLine = signalTimes.map((t, i) => ({ time: t, value: signalValues[i] }));
+
+      const signalByTime = new Map(signalLine.map((p) => [p.time, p.value]));
+      const histogram = macdLine
+        .filter((p) => signalByTime.has(p.time))
+        .map((p) => {
+          const diff = p.value - signalByTime.get(p.time);
+          return { time: p.time, value: diff, color: diff >= 0 ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)' };
+        });
+
+      return { macdLine, signalLine, histogram };
+    }
+
     function createPanel(index, defaultSymbol) {
       const root = document.querySelector(`[data-panel-index="${index}"]`);
       const saved = loadChartSettings(index);
@@ -1133,9 +1183,9 @@
         localization: {
           timeFormatter: (time) => formatChartLocalTime(time),
         },
-        // Three vertical bands sharing this one chart: price (top ~65%),
-        // volume (middle band), RSI (bottom-most band).
-        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.30 } },
+        // Four vertical bands sharing this one chart: price (top ~50%),
+        // volume, RSI, MACD (bottom-most band).
+        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.45 } },
       });
 
       const candlestickSeries = chart.addCandlestickSeries({
@@ -1152,7 +1202,7 @@
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.72, bottom: 0.15 } });
+      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.57, bottom: 0.32 } });
 
       const RSI_PERIOD = 14;
       const rsiSeries = chart.addLineSeries({
@@ -1163,12 +1213,39 @@
         lastValueVisible: true,
         title: 'RSI',
       });
-      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.70, bottom: 0.17 } });
       // RSI's own scale is fixed 0-100 (not auto-fit to data), so the
       // 70/30 reference lines always sit at their real, meaningful levels.
       rsiSeries.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
       rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
       rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
+
+      // MACD (12, 26, 9) - histogram (MACD minus signal) plus the two
+      // lines themselves, all sharing one bottom-most band below RSI.
+      const MACD_FAST = 12;
+      const MACD_SLOW = 26;
+      const MACD_SIGNAL = 9;
+      const macdHistSeries = chart.addHistogramSeries({
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      const macdLineSeries = chart.addLineSeries({
+        color: '#42a5f5',
+        lineWidth: 1,
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'MACD',
+      });
+      const macdSignalSeries = chart.addLineSeries({
+        color: '#ff9800',
+        lineWidth: 1,
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      chart.priceScale('macd').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
 
 
       const panel = {
@@ -1186,6 +1263,9 @@
         candlestickSeries,
         volumeSeries,
         rsiSeries,
+        macdHistSeries,
+        macdLineSeries,
+        macdSignalSeries,
         indicators: [], // [{id, type, period, lineStyle, lineType, color, series, currentValue}] - fully user-managed
         closeHistory: [],
         previousClose: null,
@@ -1571,6 +1651,10 @@
           }
         });
         rsiSeries.setData(computeRSI(hist, RSI_PERIOD));
+        const macd = computeMACD(hist, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
+        macdHistSeries.setData(macd.histogram);
+        macdLineSeries.setData(macd.macdLine);
+        macdSignalSeries.setData(macd.signalLine);
 
         els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
         els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
@@ -2121,6 +2205,9 @@
           candlestickSeries.setData([]);
           volumeSeries.setData([]);
           rsiSeries.setData([]);
+          macdHistSeries.setData([]);
+          macdLineSeries.setData([]);
+          macdSignalSeries.setData([]);
           panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; });
           panel.closeHistory = [];
           panel.symbol = previousSymbol;
@@ -2136,6 +2223,10 @@
           })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
           rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
+          const macd = computeMACD(seedCandles, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
+          macdHistSeries.setData(macd.histogram);
+          macdLineSeries.setData(macd.macdLine);
+          macdSignalSeries.setData(macd.signalLine);
           // Recompute whatever indicators the user has added, against
           // this (possibly new) symbol's fresh data - the user's chosen
           // set persists across ticker switches, just recalculated.
