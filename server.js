@@ -12,6 +12,7 @@ const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
 const { createFlowBuffer } = require('./lib/flowBuffer');
 const cache = require('./lib/cache');
+const flowHistory = require('./lib/flowHistory');
 // NOTE: auth (lib/auth.js, lib/mailer.js) is intentionally NOT wired in
 // here - this is the deploy-now version, auth requires a working
 // Postgres + Google OAuth setup that hasn't been done yet. The
@@ -143,6 +144,7 @@ const stockHub = createStockHub({
       const flowPayload = { price, size, dollarValue, side, timeMs };
       flowBuffer.record(`stockflow:${symbol}`, flowPayload);
       broadcastStockFlow(symbol, flowPayload);
+      flowHistory.recordFlowEvent({ symbol, assetType: 'stock', side, size, value: dollarValue, timeMs });
     }
   },
   onStatus: (status, detail) => {
@@ -157,6 +159,7 @@ const tradierHub = createTradierHub({
   token: TRADIER_TOKEN,
   onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
   flowBuffer,
+  onFlowEvent: (event) => flowHistory.recordFlowEvent(event),
 });
 
 const futuresHub = createFuturesHub({
@@ -165,6 +168,15 @@ const futuresHub = createFuturesHub({
   onBigTrade: (ticker, payload) => {
     flowBuffer.record(`stockflow:${ticker}`, payload);
     broadcastStockFlow(ticker, payload);
+    flowHistory.recordFlowEvent({
+      symbol: ticker,
+      assetType: 'futures',
+      side: payload.side,
+      size: payload.standardEquivalentSize,
+      value: payload.dollarValue,
+      sourceSymbol: payload.sourceSymbol,
+      timeMs: payload.timeMs,
+    });
   }, // same "large print on the underlying" concept as stocks, same broadcast function
 });
 
@@ -232,12 +244,38 @@ app.get('/api/premium', async (req, res) => {
   }
 });
 
+// GET /api/flow-history?symbol=XYZ - every saved qualifying flow event
+// (option, stock, or futures) for this symbol within the retention
+// window (1 day - see lib/flowHistory.js), oldest first. Powers the
+// "Replay" feature: backfills a symbol's full day of flow onto its
+// chart, not just whatever streamed in live while the tab was open.
+app.get('/api/flow-history', async (req, res) => {
+  const symbol = String(req.query.symbol || '').toUpperCase();
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+
+  try {
+    const events = await flowHistory.getFlowHistory(symbol);
+    res.json({ events });
+  } catch (err) {
+    console.error(`[flow-history] failed for ${symbol}:`, err.message);
+    res.status(502).json({ error: 'Unable to load flow history right now' });
+  }
+});
+
 // Fire-and-forget at startup - fetches near-the-money contracts for every
 // curated leaderboard symbol once. Doesn't block the server from starting;
 // the leaderboard just reports ready:false until this finishes.
 tradierHub.initLeaderboard().catch((err) => {
   console.error('[startup] Leaderboard init failed:', err.message);
 });
+
+// 1-day retention for saved flow history - nothing here ever deletes
+// itself automatically, so this has to run on a schedule. Once at
+// startup (catches anything that piled up while the server was down),
+// then hourly - frequent enough that the table never grows far past a
+// day's worth of data, without running a DELETE on every single event.
+flowHistory.purgeOldFlowEvents();
+setInterval(() => flowHistory.purgeOldFlowEvents(), 60 * 60_000);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
