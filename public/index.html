@@ -753,6 +753,7 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="SPY" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
+      <button class="replay-btn">Replay</button>
       <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
@@ -833,6 +834,7 @@
       <label><strong>Ticker:</strong></label>
       <input type="text" class="ticker-input" value="QQQ" placeholder="e.g. AMD" />
       <button class="search-btn">Load Chart</button>
+      <button class="replay-btn">Replay</button>
       <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
@@ -1149,6 +1151,7 @@
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
+        replayBtn: root.querySelector('.replay-btn'),
         expirationSelect: root.querySelector('.expiration-select'),
         timeframeSelect: root.querySelector('.timeframe-select'),
         tickerSymbol: root.querySelector('.ticker-symbol'),
@@ -1435,7 +1438,7 @@
         panel.centerLastCandle();
       };
 
-      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel) {
+      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel, skipCap) {
         const isCall = type === 'CALL';
         const card = document.createElement('div');
         card.className = `flow-card ${isCall ? 'call' : 'put'}${expirationLabel ? ' bigflow' : ''}`;
@@ -1448,7 +1451,7 @@
           <span class="flow-premium">${premiumStr}</span>
         `;
         els.flowList.prepend(card);
-        if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+        if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
       };
 
       // Flow events (especially ones replayed from the server's rolling
@@ -1476,7 +1479,7 @@
         return candidate;
       };
 
-      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel) {
+      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel, skipCap) {
         if (!panel.lastBarTime) return;
 
         const isCall = type === 'CALL';
@@ -1484,7 +1487,7 @@
         const sideLabel = side || 'BOUGHT';
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
 
-        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel);
+        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel, skipCap);
 
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
@@ -1498,7 +1501,7 @@
           isCall,
           side: sideLabel,
         });
-        if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
+        if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
         candlestickSeries.setMarkers(panel.flowMarkers);
       };
@@ -1506,7 +1509,7 @@
       // Large trades on the underlying STOCK's shares (not options) -
       // separate from the option-flow functions above since shares don't
       // have a strike/type/expiration, just size and dollar value.
-      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol, standardEquivalentSize) {
+      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol, standardEquivalentSize, skipCap) {
         if (!panel.lastBarTime) return;
 
         const isFutures = isFuturesTicker(panel.symbol);
@@ -1550,7 +1553,7 @@
           ${primaryText ? `<span class="flow-premium">${primaryText}</span>` : ''}
         `;
         els.flowList.prepend(card);
-        if (els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+        if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
 
         // Futures large-trades get their own, higher, separately-adjustable
         // chart-marker floor - the sidebar still shows everything the
@@ -1570,7 +1573,7 @@
             : `${isBuy ? 'B' : 'S'} ${formattedSize} ${unitLabel}${viaStr} (${formattedVal})`,
           size: MARKER_SIZE,
         });
-        if (panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
+        if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
         candlestickSeries.setMarkers(panel.flowMarkers);
       };
@@ -2335,6 +2338,50 @@
         const symbol = await resolveSymbolIfRoot(rawSymbol);
         if (symbol && symbol !== panel.symbol) panel.loadInitialSeedData(symbol);
       });
+
+      els.replayBtn.addEventListener('click', async () => {
+        const symbol = panel.symbol;
+        const originalLabel = els.replayBtn.innerText;
+        els.replayBtn.disabled = true;
+        els.replayBtn.innerText = 'Loading...';
+
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+          // Start from a clean slate rather than appending - anything that
+          // streamed in live while this tab was open is ALSO in history
+          // now, so appending would duplicate it. Replay fully replaces
+          // the flow view with the saved, complete picture for today.
+          els.flowList.innerHTML = '';
+          panel.flowMarkers = [];
+          candlestickSeries.setMarkers([]);
+
+          for (const event of data.events || []) {
+            if (event.assetType === 'option') {
+              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, formatExpirationLabel(event.expiration), true);
+            } else {
+              // 'stock' and 'futures' share the same marker/card shape -
+              // size doubles as standardEquivalentSize for futures (see
+              // addStockFlowMarker: it's only actually used for the
+              // isFutures display branch, ignored otherwise).
+              panel.addStockFlowMarker(event.size, event.value, event.timeMs, event.side, event.sourceSymbol, event.size, true);
+            }
+          }
+
+          if (!data.events || data.events.length === 0) {
+            els.flowList.innerHTML = '<div style="padding: 8px; color: #8fa0be; font-size: 12px;">No saved flow for today yet</div>';
+          }
+        } catch (err) {
+          console.error(`[replay:${symbol}] failed:`, err);
+          els.flowList.innerHTML = '<div style="padding: 8px; color: #ff5252; font-size: 12px;">Failed to load flow history</div>';
+        } finally {
+          els.replayBtn.disabled = false;
+          els.replayBtn.innerText = originalLabel;
+        }
+      });
+
       els.tickerInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') els.searchBtn.click();
       });
