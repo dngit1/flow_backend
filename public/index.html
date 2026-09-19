@@ -652,6 +652,11 @@
       color: #29b6f6;
     }
 
+    .wall-label.gex-flip-label {
+      background-color: transparent;
+      color: #e0e0e0;
+    }
+
     /* End-of-line MA labels - positioned at the line's current value and
        the latest bar's x-position, instead of Lightweight Charts' native
        label (which only renders in the fixed price-axis column). */
@@ -854,6 +859,7 @@
         <div class="gex-overlay-container"></div>
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
+        <div class="wall-label gex-flip-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
       </div>
       <div class="flow-panel">
@@ -942,6 +948,7 @@
         <div class="gex-overlay-container"></div>
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
+        <div class="wall-label gex-flip-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
       </div>
       <div class="flow-panel">
@@ -980,6 +987,49 @@
     const SR_FRACTAL_N = 3; // a bar's high/low must beat N neighbors on EACH side to count as a swing point - higher N = fewer, more significant swings
     const SR_CLUSTER_TOLERANCE_PCT = 0.0015; // swing points within 0.15% of each other's price get grouped into the same level
     const SR_LEVELS_PER_SIDE = 2; // how many resistance/support lines to draw above/below current price
+
+    // GEX walls/flip aggregate gamma x OI across the nearest N
+    // expirations, not just whichever one is selected in the EXP dropdown
+    // - a single expiration is too small a slice of total open interest
+    // to represent real aggregate dealer positioning. 6 matches the
+    // existing precedent set by the Big Flow feature (MAX_BIGFLOW_
+    // EXPIRATIONS in tradierHub.js) for "how many near-term expirations
+    // is a reasonable window" in this app. Each one is a separate chain
+    // fetch, so this is also 6x the Tradier API load of the single-
+    // expiration version per refresh - worth revisiting if that becomes
+    // a rate-limit problem in practice.
+    const GEX_EXPIRATION_COUNT = 6;
+
+    // Simplified Gamma Flip approximation: sums SIGNED net GEX (calls
+    // positive, puts negative - the standard convention) at each strike,
+    // using gamma/OI evaluated AT THE CURRENT SPOT PRICE (the greeks
+    // Tradier already computed for us) - not the more rigorous method
+    // professional GEX tools use, which re-prices gamma across a whole
+    // RANGE of hypothetical spot prices via Black-Scholes and finds
+    // where that curve crosses zero. This is a cheaper, directional
+    // approximation: sweep strikes low to high, track the running
+    // cumulative net GEX, and return the strike nearest to where that
+    // running total crosses zero. Good enough to say "roughly here,"
+    // not precise enough to treat as the exact regime boundary.
+    function computeGammaFlip(callGexByStrike, putGexByStrike) {
+      const allStrikes = new Set([...callGexByStrike.keys(), ...putGexByStrike.keys()]);
+      const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
+      if (sortedStrikes.length === 0) return null;
+
+      let cumulative = 0;
+      let prevCumulative = 0;
+      let prevStrike = null;
+      for (const strike of sortedStrikes) {
+        const net = (callGexByStrike.get(strike) || 0) - (putGexByStrike.get(strike) || 0);
+        prevCumulative = cumulative;
+        cumulative += net;
+        if (prevStrike != null && ((prevCumulative < 0 && cumulative >= 0) || (prevCumulative > 0 && cumulative <= 0))) {
+          return Math.abs(prevCumulative) <= Math.abs(cumulative) ? prevStrike : strike;
+        }
+        prevStrike = strike;
+      }
+      return null; // net GEX never actually crosses zero across the observed strikes
+    }
 
     // Remembers each panel's ticker, timeframe, and indicators across
     // visits, per panel index, so the chart looks the way it was left
@@ -1229,6 +1279,7 @@
         gexOverlayContainer: root.querySelector('.gex-overlay-container'),
         gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
         gexPutWallLabel: root.querySelector('.gex-put-wall-label'),
+        gexFlipLabel: root.querySelector('.gex-flip-label'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -1820,6 +1871,8 @@
       panel.gexPutWallLine = null;
       panel.gexCallWallPrice = null;
       panel.gexPutWallPrice = null;
+      panel.gexFlipLine = null;
+      panel.gexFlipPrice = null;
       panel.gexStrikeData = []; // [{strike, c, p, isWallRow}] - gamma x OI per strike, rendered by positionGexOverlay
 
       let indicatorIdCounter = 0;
@@ -1976,6 +2029,7 @@
         positionOne(panel.lowAreaPrice, els.lowAreaLabel);
         positionOne(panel.gexCallWallPrice, els.gexCallWallLabel);
         positionOne(panel.gexPutWallPrice, els.gexPutWallLabel);
+        positionOne(panel.gexFlipPrice, els.gexFlipLabel);
 
         // Both walls on the same strike would otherwise stack their
         // labels directly on top of each other - flip Put Wall below
@@ -2164,42 +2218,59 @@
         }
       };
 
+      // Fetches and merges gamma x OI across the nearest
+      // GEX_EXPIRATION_COUNT expirations (not just whichever one is
+      // selected in the EXP dropdown) - a single expiration's open
+      // interest is too thin a slice to represent real aggregate dealer
+      // positioning. Failures are caught internally and return empty
+      // maps rather than throwing, so a GEX-specific hiccup doesn't take
+      // down the (unrelated) volume-based walls this runs alongside.
+      panel.fetchGexData = async function () {
+        const callGexByStrike = new Map();
+        const putGexByStrike = new Map();
+        try {
+          const allExpirations = await fetchAllExpirations(panel.symbol);
+          const targetExpirations = allExpirations.slice(0, GEX_EXPIRATION_COUNT);
+          const results = await Promise.all(targetExpirations.map((exp) =>
+            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(exp)}`)
+              .then((r) => r.json())
+              .catch((err) => { console.error(`[gex:${panel.symbol}] chain fetch failed for ${exp}:`, err); return { options: [] }; })
+          ));
+          for (const chainData of results) {
+            for (const o of chainData.options || []) {
+              const gamma = o.greeks?.gamma;
+              const oi = o.open_interest;
+              if (gamma == null || !(oi > 0)) continue;
+              const gexValue = gamma * oi * 100;
+              const map = o.option_type === 'call' ? callGexByStrike : putGexByStrike;
+              map.set(o.strike, (map.get(o.strike) || 0) + gexValue);
+            }
+          }
+        } catch (err) {
+          console.error(`[gex:${panel.symbol}] failed to fetch multi-expiration GEX data:`, err);
+        }
+        return { callGexByStrike, putGexByStrike };
+      };
+
       panel.refreshCallPutWalls = async function (expiration) {
         if (!expiration || isFuturesTicker(panel.symbol)) return;
 
         try {
-          const res = await fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`);
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+          const [volumeRes, gexData] = await Promise.all([
+            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`),
+            panel.fetchGexData(),
+          ]);
+          const data = await volumeRes.json();
+          if (!volumeRes.ok) throw new Error(data.error || `Request failed: ${volumeRes.status}`);
+          const { callGexByStrike, putGexByStrike } = gexData;
 
           const callVolumeByStrike = new Map();
           const putVolumeByStrike = new Map();
-          // GEX: gamma x open_interest x 100 (contract multiplier) per
-          // strike - standard convention, call-side and put-side kept as
-          // separate positive magnitudes here (the calls-positive/
-          // puts-negative NET GEX sign convention only matters if you're
-          // summing them together, which this doesn't - each side's own
-          // wall is just "which strike has the most gamma exposure on
-          // that side"). Requires the chain to include greeks (?greeks=
-          // true on the backend's Tradier request) - a contract missing
-          // gamma/OI is silently skipped rather than breaking the whole
-          // computation.
-          const callGexByStrike = new Map();
-          const putGexByStrike = new Map();
           for (const o of data.options || []) {
             const vol = parseFloat(o.volume) || 0;
-            if (vol > 0) {
-              const map = o.option_type === 'call' ? callVolumeByStrike : putVolumeByStrike;
-              map.set(o.strike, (map.get(o.strike) || 0) + vol);
-            }
-
-            const gamma = o.greeks?.gamma;
-            const oi = o.open_interest;
-            if (gamma != null && oi > 0) {
-              const gexValue = gamma * oi * 100;
-              const gexMap = o.option_type === 'call' ? callGexByStrike : putGexByStrike;
-              gexMap.set(o.strike, (gexMap.get(o.strike) || 0) + gexValue);
-            }
+            if (vol <= 0) continue;
+            const map = o.option_type === 'call' ? callVolumeByStrike : putVolumeByStrike;
+            map.set(o.strike, (map.get(o.strike) || 0) + vol);
           }
 
           const topStrike = (map) => {
@@ -2215,6 +2286,7 @@
           const putWall = topStrike(putVolumeByStrike);
           const gexCallWall = topStrike(callGexByStrike);
           const gexPutWall = topStrike(putGexByStrike);
+          const gexFlip = computeGammaFlip(callGexByStrike, putGexByStrike);
 
           const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
@@ -2270,6 +2342,7 @@
           if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
           if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
+          if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
 
           panel.callWallPrice = callWall;
           panel.putWallPrice = putWall;
@@ -2277,6 +2350,7 @@
           panel.lowAreaPrice = lowArea;
           panel.gexCallWallPrice = gexCallWall;
           panel.gexPutWallPrice = gexPutWall;
+          panel.gexFlipPrice = gexFlip;
 
           if (highArea != null) {
             panel.highAreaLine = candlestickSeries.createPriceLine({
@@ -2338,6 +2412,16 @@
               axisLabelVisible: true,
             });
             els.gexPutWallLabel.innerText = `GEX Put Wall ${gexPutWall}`;
+          }
+          if (gexFlip != null) {
+            panel.gexFlipLine = candlestickSeries.createPriceLine({
+              price: gexFlip,
+              color: '#e0e0e0',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+            });
+            els.gexFlipLabel.innerText = `Gamma Flip ${gexFlip}`;
           }
           panel.positionWallLabels();
 
@@ -2438,6 +2522,8 @@
         panel.gexPutWallPrice = null;
         els.gexCallWallLabel.style.display = 'none';
         els.gexPutWallLabel.style.display = 'none';
+        panel.gexFlipPrice = null;
+        els.gexFlipLabel.style.display = 'none';
         panel.gexStrikeData = [];
         els.gexOverlayContainer.innerHTML = '';
 
@@ -2666,10 +2752,13 @@
           // toggle off has to explicitly tear them down here too.
           if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
+          if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
           panel.gexCallWallPrice = null;
           panel.gexPutWallPrice = null;
+          panel.gexFlipPrice = null;
           els.gexCallWallLabel.style.display = 'none';
           els.gexPutWallLabel.style.display = 'none';
+          els.gexFlipLabel.style.display = 'none';
           panel.gexStrikeData = [];
         } else if (els.expirationSelect.value) {
           // Re-fetch and redraw fresh rather than trying to resurrect
