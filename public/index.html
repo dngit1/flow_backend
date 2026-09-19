@@ -677,16 +677,6 @@
       transform: translate(-50%, 4px); /* flips to sit below the line instead of above, used when Call Wall and Put Wall share the same strike */
     }
 
-    .wall-label.call-wall-label {
-      background-color: transparent;
-      color: #ff5252;
-    }
-
-    .wall-label.put-wall-label {
-      background-color: transparent;
-      color: #00c853;
-    }
-
     .sr-label {
       position: absolute;
       left: 25%; /* kept out of the right half, where the right-anchored strike/volume-profile overlay sits on stock charts */
@@ -722,13 +712,6 @@
       pointer-events: none;
       color: #ffffff;
       display: none;
-    }
-
-    .wall-label.high-area-label,
-    .wall-label.low-area-label {
-      left: 12%; /* own lane, left of both Call/Put Wall (center) and S/R labels (25%) - High/Low Area often sits at the same price as one of those, so overlapping lines shouldn't mean overlapping text */
-      background-color: transparent;
-      color: #42a5f5;
     }
   </style>
 
@@ -850,11 +833,7 @@
         <div class="chart-container"></div>
         <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
-        <div class="wall-label call-wall-label" style="display:none;"></div>
-        <div class="wall-label put-wall-label" style="display:none;"></div>
         <div class="candle-timer"></div>
-        <div class="wall-label high-area-label" style="display:none;"></div>
-        <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
         <div class="gex-overlay-container"></div>
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
@@ -939,11 +918,7 @@
         <div class="chart-container"></div>
         <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
-        <div class="wall-label call-wall-label" style="display:none;"></div>
-        <div class="wall-label put-wall-label" style="display:none;"></div>
         <div class="candle-timer"></div>
-        <div class="wall-label high-area-label" style="display:none;"></div>
-        <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="strike-overlay-container"></div>
         <div class="gex-overlay-container"></div>
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
@@ -1261,11 +1236,7 @@
         flowList: root.querySelector('.flow-list'),
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         srLabelContainer: root.querySelector('.sr-label-container'),
-        callWallLabel: root.querySelector('.call-wall-label'),
-        putWallLabel: root.querySelector('.put-wall-label'),
         candleTimer: root.querySelector('.candle-timer'),
-        highAreaLabel: root.querySelector('.high-area-label'),
-        lowAreaLabel: root.querySelector('.low-area-label'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
         indicatorPanel: root.querySelector('.indicator-panel'),
         indicatorTypeSelect: root.querySelector('.indicator-type-select'),
@@ -1857,14 +1828,6 @@
         panel.positionSRLabels();
       };
 
-      panel.callWallLine = null;
-      panel.putWallLine = null;
-      panel.callWallPrice = null;
-      panel.putWallPrice = null;
-      panel.highAreaLine = null;
-      panel.lowAreaLine = null;
-      panel.highAreaPrice = null;
-      panel.lowAreaPrice = null;
       panel.wallRefreshTimer = null;
       panel.strikeOverlayData = []; // [{strike, c, p, cPct, pPct, isWallRow}] - rendered by positionStrikeOverlay
       panel.gexCallWallLine = null;
@@ -2010,7 +1973,6 @@
       // mapping shifts as new data comes in.
       panel.positionWallLabels = function () {
         const height = els.chartContainer.clientHeight || 0;
-        const sameStrike = panel.callWallPrice != null && panel.putWallPrice != null && panel.callWallPrice === panel.putWallPrice;
 
         function positionOne(price, labelEl) {
           if (price == null) { labelEl.style.display = 'none'; return; }
@@ -2023,10 +1985,6 @@
           }
         }
 
-        positionOne(panel.callWallPrice, els.callWallLabel);
-        positionOne(panel.putWallPrice, els.putWallLabel);
-        positionOne(panel.highAreaPrice, els.highAreaLabel);
-        positionOne(panel.lowAreaPrice, els.lowAreaLabel);
         positionOne(panel.gexCallWallPrice, els.gexCallWallLabel);
         positionOne(panel.gexPutWallPrice, els.gexPutWallLabel);
         positionOne(panel.gexFlipPrice, els.gexFlipLabel);
@@ -2034,7 +1992,6 @@
         // Both walls on the same strike would otherwise stack their
         // labels directly on top of each other - flip Put Wall below
         // the line so they stay readable side by side.
-        els.putWallLabel.classList.toggle('below-line', sameStrike);
         const gexSameStrike = panel.gexCallWallPrice != null && panel.gexPutWallPrice != null && panel.gexCallWallPrice === panel.gexPutWallPrice;
         els.gexPutWallLabel.classList.toggle('below-line', gexSameStrike);
       };
@@ -2336,63 +2293,19 @@
             return { c, p, cPct, pPct };
           };
 
-          if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
-          if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
-          if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
-          if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
           if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
 
-          panel.callWallPrice = callWall;
-          panel.putWallPrice = putWall;
-          panel.highAreaPrice = highArea;
-          panel.lowAreaPrice = lowArea;
+          // callWall/putWall/highArea/lowArea themselves are still
+          // computed above and used below (isWallRow highlighting + the
+          // strike range for the volume profile overlay) - only the
+          // chart LINES/labels for them were removed, the volume
+          // profile itself is otherwise unchanged.
           panel.gexCallWallPrice = gexCallWall;
           panel.gexPutWallPrice = gexPutWall;
           panel.gexFlipPrice = gexFlip;
 
-          if (highArea != null) {
-            panel.highAreaLine = candlestickSeries.createPriceLine({
-              price: highArea,
-              color: '#42a5f5',
-              lineWidth: 2,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-            });
-            els.highAreaLabel.innerText = `High Area: ${highArea}`;
-          }
-          if (lowArea != null) {
-            panel.lowAreaLine = candlestickSeries.createPriceLine({
-              price: lowArea,
-              color: '#42a5f5',
-              lineWidth: 2,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-            });
-            els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
-          }
-
-          if (callWall != null) {
-            panel.callWallLine = candlestickSeries.createPriceLine({
-              price: callWall,
-              color: '#ff5252',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-            });
-            els.callWallLabel.innerText = `Call Wall ${callWall}`;
-          }
-          if (putWall != null) {
-            panel.putWallLine = candlestickSeries.createPriceLine({
-              price: putWall,
-              color: '#00c853',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Dashed,
-              axisLabelVisible: true,
-            });
-            els.putWallLabel.innerText = `Put Wall ${putWall}`;
-          }
           if (gexCallWall != null) {
             panel.gexCallWallLine = candlestickSeries.createPriceLine({
               price: gexCallWall,
@@ -2504,18 +2417,6 @@
         // chart, at price levels that belong to a completely different
         // underlying.
         clearInterval(panel.wallRefreshTimer);
-        if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
-        if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
-        if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
-        if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
-        panel.callWallPrice = null;
-        panel.putWallPrice = null;
-        panel.highAreaPrice = null;
-        panel.lowAreaPrice = null;
-        els.callWallLabel.style.display = 'none';
-        els.putWallLabel.style.display = 'none';
-        els.highAreaLabel.style.display = 'none';
-        els.lowAreaLabel.style.display = 'none';
         panel.strikeOverlayData = [];
         els.strikeOverlayContainer.innerHTML = '';
         panel.gexCallWallPrice = null;
