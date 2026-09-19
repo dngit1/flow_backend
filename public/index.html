@@ -1,0 +1,2846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Option Flow</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #0b0e14;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .global-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      background-color: #0b0e14;
+      border-bottom: 1px solid #1f293d;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .global-bar select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .global-bar {
+      position: relative; /* anchor for the leaderboard dropdown */
+    }
+
+    .leaderboard-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .leaderboard-btn:hover {
+      background-color: #364153;
+    }
+
+    .leaderboard-panel {
+      position: absolute;
+      top: 44px;
+      left: 12px;
+      z-index: 50;
+      background-color: #131822;
+      border: 1px solid #1f293d;
+      border-radius: 8px;
+      padding: 12px;
+      min-width: 260px;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+
+    .leaderboard-panel.hidden {
+      display: none;
+    }
+
+    .leaderboard-panel h4 {
+      margin: 0 0 6px 0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #8fa0be;
+    }
+
+    .leaderboard-header {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 0 6px 4px 6px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #1f293d;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .leaderboard-item {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 5px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .leaderboard-item:hover {
+      background-color: #1f293d;
+    }
+
+    .leaderboard-rank {
+      color: #8fa0be;
+      font-size: 11px;
+      width: 16px;
+      flex-shrink: 0;
+    }
+
+    .leaderboard-symbol {
+      font-weight: 600;
+    }
+
+    .leaderboard-symbol.call-heavy { color: #00c853; }
+    .leaderboard-symbol.put-heavy { color: #ff5252; }
+
+    .leaderboard-pct {
+      flex: 1;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .leaderboard-call {
+      color: #00c853;
+      font-size: 12px;
+      min-width: 46px;
+      text-align: right;
+    }
+
+    .leaderboard-put {
+      color: #ff5252;
+      font-size: 12px;
+      min-width: 46px;
+      text-align: right;
+    }
+
+    .panels-row {
+      display: flex;
+      flex-direction: row;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      border-right: 1px solid #1f293d;
+    }
+
+    .panel.hidden {
+      display: none;
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .toolbar {
+      position: relative; /* positioning context for toolbar children if needed */
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background-color: #0b0e14;
+      border-bottom: 1px solid #1f293d;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .toolbar label {
+      font-size: 13px;
+    }
+
+    .toolbar input {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      text-transform: uppercase;
+      width: 90px;
+    }
+
+    .toolbar button {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .toolbar button:hover {
+      background-color: #364153;
+    }
+
+    .toolbar select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      max-width: 150px;
+    }
+
+    .toolbar select:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .main-layout {
+      display: flex;
+      flex: 1;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .chart-wrapper {
+      position: relative;
+      flex: 1;
+      min-height: 300px;
+      min-width: 200px;
+      overflow: hidden;
+    }
+
+    .chart-watermark {
+      position: absolute;
+      bottom: 4px;
+      right: 8px;
+      z-index: 3;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: rgba(209, 212, 220, 0.35);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .chart-error-banner {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      background-color: #2b1414;
+      border: 1px solid #7a1f1f;
+      color: #ffb4b4;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      max-width: 85%;
+      text-align: center;
+      display: none;
+    }
+
+    .chart-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .ticker-overlay {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .ticker-symbol {
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    .ticker-price {
+      font-size: 15px;
+      color: #00c853;
+    }
+
+    .ticker-change {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .ws-debug {
+      font-size: 10px;
+      color: #8fa0be;
+      font-family: monospace;
+    }
+
+    .status-badge {
+      font-size: 11px;
+      padding: 3px 7px;
+      border-radius: 4px;
+      background-color: #2b3548;
+      color: #8fa0be;
+    }
+
+    .flow-panel {
+      width: 190px;
+      flex-shrink: 0;
+      background-color: #131822;
+      border-left: 1px solid #1f293d;
+      padding: 10px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .flow-title {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #8fa0be;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+
+    /* Narrow screens (phones): side-by-side layouts don't fit without
+       clipping content, so stack everything vertically instead. */
+    @media (max-width: 700px) {
+      .panels-row {
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      .panel {
+        border-right: none;
+        border-bottom: 1px solid #1f293d;
+        flex: none; /* let each panel take its natural stacked height, not fight for equal split */
+      }
+
+      .main-layout {
+        flex-direction: column;
+      }
+
+      .chart-wrapper {
+        min-height: 480px; /* room for 4 stacked panes (price, volume, RSI, MACD) without cramping any of them */
+        min-width: 0;
+      }
+
+      .flow-panel {
+        width: 100%;
+        height: 160px;
+        border-left: none;
+        border-top: 1px solid #1f293d;
+        margin-top: 14px;
+      }
+    }
+
+    .flow-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .flow-card {
+      background-color: #1a2232;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border-left: 4px solid #8fa0be;
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .flow-card.call { border-left-color: #00c853; }
+    .flow-card.put { border-left-color: #ff5252; }
+
+    .flow-details {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .flow-strike { font-weight: bold; color: #ffffff; }
+    .flow-premium { color: #00c853; font-weight: 600; }
+    .flow-card.put .flow-premium { color: #ff5252; }
+
+    .indicator-toggle-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .indicator-toggle-btn:hover {
+      background-color: #364153;
+    }
+
+    .indicator-toggle-btn.active {
+      background-color: #7a5f00;
+      border-color: #a68100;
+    }
+
+    .indicator-wrap {
+      position: relative;
+      display: inline-block;
+    }
+
+    .indicator-panel {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 6px;
+      z-index: 50;
+      background-color: #131822;
+      border: 1px solid #1f293d;
+      border-radius: 8px;
+      padding: 10px;
+      min-width: 220px;
+      max-width: calc(100vw - 16px);
+      box-sizing: border-box;
+    }
+
+    .indicator-panel.hidden {
+      display: none;
+    }
+
+    .indicator-add-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .sr-toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #d1d4dc;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #1f293d;
+      cursor: pointer;
+    }
+
+    .indicator-type-select {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px;
+    }
+
+    .indicator-period-input {
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px;
+      width: 50px;
+    }
+
+    .indicator-add-btn {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
+    .indicator-add-btn:hover {
+      background-color: #364153;
+    }
+
+    .indicator-list-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      font-size: 12px;
+    }
+
+    .indicator-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .indicator-list-label {
+      flex: 1;
+    }
+
+    .indicator-remove-btn {
+      background: none;
+      border: none;
+      color: #8fa0be;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+    }
+
+    .indicator-remove-btn:hover {
+      color: #ff5252;
+    }
+
+    /* Big-flow entries (any expiration, not just the selected one) get a
+       distinct gold border and an expiration-date line, so they're never
+       confused with the normal single-expiration sidebar entries. */
+    .flow-card.bigflow {
+      border-left-color: #ffc107;
+    }
+
+    .flow-bigflow-tag {
+      color: #ffc107;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+    }
+
+    /* Stock share flow (large trades on the underlying, not options) -
+       purple, distinct from option flow's green/red and big-flow's gold. */
+    .flow-card.stockflow {
+      border-left-color: #9c27b0;
+    }
+
+    .flow-stockflow-tag {
+      color: #9c27b0;
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.3px;
+    }
+
+    /* Always-visible on-chart per-strike overlay - one absolutely
+       positioned row per strike, right-anchored near the price axis,
+       vertically placed at that strike's actual price level. Replaces
+       the old click-to-open "Vol by Strike" dropdown panel. */
+    .strike-overlay-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 12;
+    }
+
+    .strike-overlay-row {
+      position: absolute;
+      right: 62px; /* clears the native price axis labels */
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: row-reverse; /* bar-track (closest to axis) first visually, strike number trails leftward - matches how volume profile bars anchor to one edge */
+      align-items: center;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .strike-overlay-row.wall-row {
+      font-weight: 700;
+    }
+
+    .strike-overlay-strike {
+      width: 28px;
+      text-align: right;
+      color: #d1d4dc;
+      margin-right: 6px;
+    }
+
+    .strike-overlay-bar-track {
+      position: relative; /* anchor for the overlapping text below */
+      width: 150px;
+      height: 14px;
+    }
+
+    .strike-overlay-bar-fill {
+      height: 100%;
+      display: flex;
+      border-radius: 2px;
+      overflow: hidden;
+      min-width: 2px; /* so a strike with tiny volume still shows a sliver, not nothing */
+      margin-left: auto; /* anchors the fill's right edge to the track's right edge - grows leftward with volume, like a real volume profile */
+    }
+
+    .strike-overlay-bar-call { height: 100%; background-color: #00c853; }
+    .strike-overlay-bar-put { height: 100%; background-color: #ff5252; }
+
+    .strike-overlay-text {
+      position: absolute;
+      top: 50%;
+      right: 4px;
+      transform: translateY(-50%);
+      color: #ffffff;
+      text-shadow: 0 0 3px #000000, 0 0 3px #000000; /* keeps text legible over both the green and red bar segments */
+      z-index: 1;
+    }
+
+    .strike-overlay-call-pct { color: #ffffff; }
+    .strike-overlay-put-pct { color: #ffffff; }
+
+    /* GEX overlay reuses all the structural strike-overlay-* classes
+       above, just in its own container positioned further left - so if
+       both this and the volume profile are toggled on at once (the
+       whole point: comparing them), they render as two side-by-side
+       columns instead of overlapping illegibly. Distinct orange/cyan
+       color scheme keeps them visually unambiguous even when crowded. */
+    .gex-overlay-row {
+      right: 250px;
+    }
+
+    .gex-overlay-row .strike-overlay-bar-call { background-color: #ffa726; }
+    .gex-overlay-row .strike-overlay-bar-put { background-color: #29b6f6; }
+
+    .wall-label.gex-call-wall-label {
+      background-color: transparent;
+      color: #ffa726;
+    }
+
+    .wall-label.gex-put-wall-label {
+      background-color: transparent;
+      color: #29b6f6;
+    }
+
+    /* End-of-line MA labels - positioned at the line's current value and
+       the latest bar's x-position, instead of Lightweight Charts' native
+       label (which only renders in the fixed price-axis column). */
+    .wall-label {
+      position: absolute;
+      left: 50%;
+      transform: translate(-50%, -100%);
+      z-index: 15;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .wall-label.below-line {
+      transform: translate(-50%, 4px); /* flips to sit below the line instead of above, used when Call Wall and Put Wall share the same strike */
+    }
+
+    .wall-label.call-wall-label {
+      background-color: transparent;
+      color: #ff5252;
+    }
+
+    .wall-label.put-wall-label {
+      background-color: transparent;
+      color: #00c853;
+    }
+
+    .sr-label {
+      position: absolute;
+      left: 25%; /* kept out of the right half, where the right-anchored strike/volume-profile overlay sits on stock charts */
+      transform: translate(-50%, -100%);
+      z-index: 14;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .sr-label.resistance-label {
+      color: #ff5252;
+    }
+
+    .sr-label.support-label {
+      color: #00c853;
+    }
+
+    .candle-timer {
+      position: absolute;
+      right: 0;
+      z-index: 15;
+      padding: 1px 8px;
+      border-radius: 0 0 3px 3px; /* only bottom corners rounded, so the top edge sits flush against the native price label above it */
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      text-align: center;
+      pointer-events: none;
+      color: #ffffff;
+      display: none;
+    }
+
+    .wall-label.high-area-label,
+    .wall-label.low-area-label {
+      left: 12%; /* own lane, left of both Call/Put Wall (center) and S/R labels (25%) - High/Low Area often sits at the same price as one of those, so overlapping lines shouldn't mean overlapping text */
+      background-color: transparent;
+      color: #42a5f5;
+    }
+  </style>
+
+  <!-- Lightweight Charts v4 Standalone -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+  <div class="global-bar">
+    <label><strong>Layout:</strong></label>
+    <select id="layout-select">
+      <option value="2">2 Windows</option>
+      <option value="1">1 Window</option>
+    </select>
+
+    <label><strong>Stock - Min On Chart:</strong></label>
+    <select id="marker-floor-select">
+      <option value="0">Show all</option>
+      <option value="10000">$10k+</option>
+      <option value="25000">$25k+</option>
+      <option value="50000" selected>$50k+</option>
+      <option value="100000">$100k+</option>
+      <option value="250000">$250k+</option>
+      <option value="500000">$500k+</option>
+      <option value="1000000">$1M+</option>
+    </select>
+
+    <label><strong>Future - Min On Chart:</strong></label>
+    <select id="futures-marker-floor-select">
+      <option value="2000000">$2M+</option>
+      <option value="4000000">$4M+</option>
+      <option value="6000000">$6M+</option>
+      <option value="8000000" selected>$8M+</option>
+      <option value="10000000">$10M+</option>
+    </select>
+
+    <button id="leaderboard-btn" class="leaderboard-btn">Top Premium</button>
+    <div id="leaderboard-panel" class="leaderboard-panel hidden">
+      <h4>Top Option Premium Today</h4>
+      <div class="leaderboard-header">
+        <span class="leaderboard-rank"></span>
+        <span class="leaderboard-symbol"></span>
+        <span class="leaderboard-call">Calls</span>
+        <span class="leaderboard-put">Puts</span>
+      </div>
+      <div id="leaderboard-list">Loading...</div>
+    </div>
+  </div>
+
+  <div class="panels-row">
+
+  <div class="panel" data-panel-index="0">
+    <div class="toolbar">
+      <label><strong>Ticker:</strong></label>
+      <input type="text" class="ticker-input" value="SPY" placeholder="e.g. AMD" />
+      <button class="search-btn">Load Chart</button>
+      <button class="replay-btn">Replay</button>
+      <label><strong>TF:</strong></label>
+      <select class="timeframe-select">
+        <option value="1min" selected>1m</option>
+        <option value="5min">5m</option>
+        <option value="15min">15m</option>
+        <option value="30min">30m</option>
+        <option value="1h">1H</option>
+        <option value="1day">1D</option>
+      </select>
+      <div class="indicator-wrap">
+        <button class="indicator-toggle-btn">Indicators</button>
+        <div class="indicator-panel hidden">
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="sr-toggle-checkbox" checked />
+            Support/Resistance
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
+            Option Volume (stock only)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="macd-toggle-checkbox" checked />
+            MACD
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="gex-toggle-checkbox" checked />
+            Gamma Exposure (GEX)
+          </label>
+          <div class="indicator-add-row">
+            <select class="indicator-type-select">
+              <option value="MA">MA</option>
+              <option value="EMA">EMA</option>
+            </select>
+            <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+          </div>
+          <div class="indicator-add-row">
+            <select class="indicator-style-select">
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="step">Step</option>
+            </select>
+            <button class="indicator-add-btn">Add</button>
+          </div>
+          <div class="indicator-list">No indicators added</div>
+        </div>
+      </div>
+      <label><strong>EXP:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="main-layout">
+      <div class="chart-wrapper">
+        <div class="ticker-overlay">
+          <span class="ticker-symbol">SPY</span>
+          <span class="ticker-price">--</span>
+          <span class="ticker-change"></span>
+          <span class="status-badge">Disconnected</span>
+          <span class="ws-debug"></span>
+        </div>
+        <div class="chart-container"></div>
+        <div class="chart-watermark">XNLflow.com</div>
+        <div class="chart-error-banner"></div>
+        <div class="wall-label call-wall-label" style="display:none;"></div>
+        <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="candle-timer"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
+        <div class="strike-overlay-container"></div>
+        <div class="gex-overlay-container"></div>
+        <div class="wall-label gex-call-wall-label" style="display:none;"></div>
+        <div class="wall-label gex-put-wall-label" style="display:none;"></div>
+        <div class="sr-label-container"></div>
+      </div>
+      <div class="flow-panel">
+        <div class="flow-title">Live Flow</div>
+        <div class="flow-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" data-panel-index="1">
+    <div class="toolbar">
+      <label><strong>Ticker:</strong></label>
+      <input type="text" class="ticker-input" value="QQQ" placeholder="e.g. AMD" />
+      <button class="search-btn">Load Chart</button>
+      <button class="replay-btn">Replay</button>
+      <label><strong>TF:</strong></label>
+      <select class="timeframe-select">
+        <option value="1min" selected>1m</option>
+        <option value="5min">5m</option>
+        <option value="15min">15m</option>
+        <option value="30min">30m</option>
+        <option value="1h">1H</option>
+        <option value="1day">1D</option>
+      </select>
+      <div class="indicator-wrap">
+        <button class="indicator-toggle-btn">Indicators</button>
+        <div class="indicator-panel hidden">
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="sr-toggle-checkbox" checked />
+            Support/Resistance
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
+            Option Volume (stock only)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="macd-toggle-checkbox" checked />
+            MACD
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="gex-toggle-checkbox" checked />
+            Gamma Exposure (GEX)
+          </label>
+          <div class="indicator-add-row">
+            <select class="indicator-type-select">
+              <option value="MA">MA</option>
+              <option value="EMA">EMA</option>
+            </select>
+            <input type="number" class="indicator-period-input" value="20" min="1" max="500" />
+          </div>
+          <div class="indicator-add-row">
+            <select class="indicator-style-select">
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+              <option value="step">Step</option>
+            </select>
+            <button class="indicator-add-btn">Add</button>
+          </div>
+          <div class="indicator-list">No indicators added</div>
+        </div>
+      </div>
+      <label><strong>EXP:</strong></label>
+      <select class="expiration-select" disabled>
+        <option value="">Loading...</option>
+      </select>
+    </div>
+    <div class="main-layout">
+      <div class="chart-wrapper">
+        <div class="ticker-overlay">
+          <span class="ticker-symbol">QQQ</span>
+          <span class="ticker-price">--</span>
+          <span class="ticker-change"></span>
+          <span class="status-badge">Disconnected</span>
+          <span class="ws-debug"></span>
+        </div>
+        <div class="chart-container"></div>
+        <div class="chart-watermark">XNLflow.com</div>
+        <div class="chart-error-banner"></div>
+        <div class="wall-label call-wall-label" style="display:none;"></div>
+        <div class="wall-label put-wall-label" style="display:none;"></div>
+        <div class="candle-timer"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
+        <div class="strike-overlay-container"></div>
+        <div class="gex-overlay-container"></div>
+        <div class="wall-label gex-call-wall-label" style="display:none;"></div>
+        <div class="wall-label gex-put-wall-label" style="display:none;"></div>
+        <div class="sr-label-container"></div>
+      </div>
+      <div class="flow-panel">
+        <div class="flow-title">Live Flow</div>
+        <div class="flow-list"></div>
+      </div>
+    </div>
+  </div>
+
+  </div>
+
+  <script>
+    const BACKEND_HTTP = window.location.origin;
+    const BACKEND_WS = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+    const MIN_FLOW_PREMIUM = 25000;
+    let CHART_MARKER_PREMIUM_FLOOR = 50000;
+    let FUTURES_CHART_MARKER_FLOOR = 8_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow
+    const CHART_MARKER_MAX = 30;
+    const SIDEBAR_FLOW_MAX = 60;
+    const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
+    const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
+    const BIG_FLOW_THRESHOLD_OTHER = 150000; // everything else - thinner chains mean a $250k single print is comparatively rare, so this stays lower to actually surface activity
+    const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
+    const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
+
+    // Support/resistance: swing-high/low ("fractal") clustering, computed
+    // from a FIXED 15-minute bar series maintained independently of
+    // whatever timeframe the chart is actually displaying - so levels
+    // stay stable (based on real 15m structure) rather than jumping
+    // around every time you switch TF, and rather than being either too
+    // noisy (1m) or too stale (1h+) depending on what you're viewing.
+    const SR_INTERVAL = '15min';
+    const SR_INTERVAL_SECONDS = INTERVAL_SECONDS[SR_INTERVAL];
+    const SR_LOOKBACK_BARS = 52; // ~2 trading days of 15m bars (6.5h regular session -> 26 bars/day)
+    const SR_FRACTAL_N = 3; // a bar's high/low must beat N neighbors on EACH side to count as a swing point - higher N = fewer, more significant swings
+    const SR_CLUSTER_TOLERANCE_PCT = 0.0015; // swing points within 0.15% of each other's price get grouped into the same level
+    const SR_LEVELS_PER_SIDE = 2; // how many resistance/support lines to draw above/below current price
+
+    // Remembers each panel's ticker, timeframe, and indicators across
+    // visits, per panel index, so the chart looks the way it was left
+    // instead of always resetting to the SPY/QQQ defaults. Read once at
+    // startup (loadChartSettings) and written every time one of those
+    // three things changes (saveChartSettings) - never on every price
+    // tick or anything high-frequency. Wrapped in try/catch since
+    // localStorage can throw (private browsing, storage disabled/full).
+    function chartSettingsKey(index) {
+      return `xnlflow:panel:${index}:settings`;
+    }
+
+    function loadChartSettings(index) {
+      try {
+        const raw = localStorage.getItem(chartSettingsKey(index));
+        return raw ? JSON.parse(raw) : null;
+      } catch (err) {
+        console.error(`[settings] failed to load panel ${index} settings:`, err);
+        return null;
+      }
+    }
+
+    function saveChartSettings(panel) {
+      try {
+        const settings = {
+          symbol: panel.symbol,
+          interval: panel.interval,
+          srEnabled: panel.srEnabled,
+          volumeProfileEnabled: panel.volumeProfileEnabled,
+          gexEnabled: panel.gexEnabled,
+          macdEnabled: panel.macdEnabled,
+          indicators: panel.indicators.map((ind) => ({
+            type: ind.type,
+            period: ind.period,
+            lineStyle: ind.lineStyle,
+            lineType: ind.lineType,
+          })),
+        };
+        localStorage.setItem(chartSettingsKey(panel.index), JSON.stringify(settings));
+      } catch (err) {
+        console.error(`[settings] failed to save panel ${panel.index} settings:`, err);
+      }
+    }
+
+    async function fetchHistoricalBars(symbol, interval) {
+      let response;
+      try {
+        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
+      } catch (networkErr) {
+        throw new Error(`Can't reach the backend at ${BACKEND_HTTP} - it may be waking up from sleep (Render free tier), try again in a moment`);
+      }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
+      if (!data.bars || data.bars.length === 0) throw new Error('No bars returned for this symbol');
+      return { bars: data.bars, previousClose: data.previousClose || null };
+    }
+
+    async function fetchAllExpirations(symbol) {
+      const response = await fetch(`${BACKEND_HTTP}/api/expirations?symbol=${encodeURIComponent(symbol)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
+      if (!data.expirations || data.expirations.length === 0) throw new Error('No expirations returned');
+      return data.expirations;
+    }
+
+    function formatExpirationLabel(dateStr) {
+      const d = new Date(`${dateStr}T00:00:00Z`);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    }
+
+    // Always Eastern Time (market/exchange time) regardless of the
+    // viewer's own location - a trader in any timezone still sees the
+    // same clock time everyone else trading US markets sees.
+    // Uses the viewer's own local browser timezone (no explicit timeZone
+    // override) - matches their computer's clock and TradingView's usual
+    // default display, so chart time, flow timestamps, and local time
+    // all agree with each other.
+    function formatTradeTime(timestampMs) {
+      return new Date(timestampMs).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', second: '2-digit',
+      });
+    }
+
+    // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds -
+    // year/month/day ticks should show a date, not a time, particularly
+    // relevant now that the 1-day timeframe spans many calendar days.
+    function formatChartLocalTime(unixSeconds, tickMarkType) {
+      const d = new Date(unixSeconds * 1000);
+      if (tickMarkType != null && tickMarkType <= 2) {
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function isFuturesTicker(symbol) {
+      return /^[A-Z]{1,3}[FGHJKMNQUVXZ]\d$/.test(symbol);
+    }
+
+    function computeMA(bars, period) {
+      const points = [];
+      for (let i = period - 1; i < bars.length; i++) {
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += bars[j].close;
+        points.push({ time: bars[i].time, value: sum / period });
+      }
+      return points;
+    }
+
+    // Standard EMA - seeded with a simple average of the first `period`
+    // closes, then smoothed forward from there.
+    function computeEMA(bars, period) {
+      if (bars.length < period) return [];
+      const points = [];
+      const multiplier = 2 / (period + 1);
+      let sum = 0;
+      for (let i = 0; i < period; i++) sum += bars[i].close;
+      let ema = sum / period;
+      points.push({ time: bars[period - 1].time, value: ema });
+      for (let i = period; i < bars.length; i++) {
+        ema = (bars[i].close - ema) * multiplier + ema;
+        points.push({ time: bars[i].time, value: ema });
+      }
+      return points;
+    }
+
+    // Standard Wilder's-smoothing RSI (same method used by virtually every
+    // charting platform) - needs `period` bars just to seed the first
+    // average, so the line starts partway into the visible history, same
+    // as MA200 did before it was removed.
+    function computeRSI(bars, period) {
+      if (bars.length <= period) return [];
+      const points = [];
+
+      let gainSum = 0;
+      let lossSum = 0;
+      for (let i = 1; i <= period; i++) {
+        const change = bars[i].close - bars[i - 1].close;
+        if (change > 0) gainSum += change; else lossSum += -change;
+      }
+      let avgGain = gainSum / period;
+      let avgLoss = lossSum / period;
+
+      const rsiFrom = (ag, al) => (al === 0 ? 100 : 100 - 100 / (1 + ag / al));
+      points.push({ time: bars[period].time, value: rsiFrom(avgGain, avgLoss) });
+
+      for (let i = period + 1; i < bars.length; i++) {
+        const change = bars[i].close - bars[i - 1].close;
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        avgGain = (avgGain * (period - 1) + gain) / period;
+        avgLoss = (avgLoss * (period - 1) + loss) / period;
+        points.push({ time: bars[i].time, value: rsiFrom(avgGain, avgLoss) });
+      }
+      return points;
+    }
+
+    // Standard MACD: MACD line = EMA(fast) - EMA(slow) of close price,
+    // signal = EMA(signal) of the MACD line itself, histogram = MACD
+    // line minus signal. Needs slowPeriod + signalPeriod bars just to
+    // produce the first histogram point, same "starts partway into the
+    // visible history" tradeoff as RSI above.
+    function computeMACD(bars, fastPeriod, slowPeriod, signalPeriod) {
+      if (bars.length < slowPeriod + signalPeriod) return { macdLine: [], signalLine: [], histogram: [] };
+
+      // EMA over a plain array of numbers (not bars with .close), so this
+      // can run a second time over the MACD line itself for the signal.
+      function emaOfValues(values, period) {
+        const multiplier = 2 / (period + 1);
+        let sum = 0;
+        for (let i = 0; i < period; i++) sum += values[i];
+        let ema = sum / period;
+        const out = [ema];
+        for (let i = period; i < values.length; i++) {
+          ema = (values[i] - ema) * multiplier + ema;
+          out.push(ema);
+        }
+        return out; // out[k] corresponds to values[period - 1 + k]
+      }
+
+      const closes = bars.map((b) => b.close);
+      const emaFastAll = emaOfValues(closes, fastPeriod); // starts at bars[fastPeriod - 1]
+      const emaSlowAll = emaOfValues(closes, slowPeriod); // starts at bars[slowPeriod - 1]
+
+      // Slow EMA starts later than fast - align them to the point where
+      // BOTH exist, which is exactly where the slow one starts.
+      const offset = slowPeriod - fastPeriod;
+      const macdValues = emaSlowAll.map((slowVal, i) => emaFastAll[i + offset] - slowVal);
+      const macdTimes = bars.slice(slowPeriod - 1).map((b) => b.time);
+
+      const signalValues = emaOfValues(macdValues, signalPeriod);
+      const signalTimes = macdTimes.slice(signalPeriod - 1);
+
+      const macdLine = macdTimes.map((t, i) => ({ time: t, value: macdValues[i] }));
+      const signalLine = signalTimes.map((t, i) => ({ time: t, value: signalValues[i] }));
+
+      const signalByTime = new Map(signalLine.map((p) => [p.time, p.value]));
+      const histogram = macdLine
+        .filter((p) => signalByTime.has(p.time))
+        .map((p) => {
+          const diff = p.value - signalByTime.get(p.time);
+          return { time: p.time, value: diff, color: diff >= 0 ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)' };
+        });
+
+      return { macdLine, signalLine, histogram };
+    }
+
+    function createPanel(index, defaultSymbol) {
+      const root = document.querySelector(`[data-panel-index="${index}"]`);
+      const saved = loadChartSettings(index);
+      const initialSymbol = saved?.symbol || defaultSymbol;
+      const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
+      const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
+      const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
+      const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
+      const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
+      const els = {
+        tickerInput: root.querySelector('.ticker-input'),
+        searchBtn: root.querySelector('.search-btn'),
+        replayBtn: root.querySelector('.replay-btn'),
+        expirationSelect: root.querySelector('.expiration-select'),
+        timeframeSelect: root.querySelector('.timeframe-select'),
+        tickerSymbol: root.querySelector('.ticker-symbol'),
+        tickerPrice: root.querySelector('.ticker-price'),
+        tickerChange: root.querySelector('.ticker-change'),
+        wsDebug: root.querySelector('.ws-debug'),
+        statusBadge: root.querySelector('.status-badge'),
+        chartContainer: root.querySelector('.chart-container'),
+        chartErrorBanner: root.querySelector('.chart-error-banner'),
+        flowList: root.querySelector('.flow-list'),
+        strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
+        srLabelContainer: root.querySelector('.sr-label-container'),
+        callWallLabel: root.querySelector('.call-wall-label'),
+        putWallLabel: root.querySelector('.put-wall-label'),
+        candleTimer: root.querySelector('.candle-timer'),
+        highAreaLabel: root.querySelector('.high-area-label'),
+        lowAreaLabel: root.querySelector('.low-area-label'),
+        indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
+        indicatorPanel: root.querySelector('.indicator-panel'),
+        indicatorTypeSelect: root.querySelector('.indicator-type-select'),
+        indicatorPeriodInput: root.querySelector('.indicator-period-input'),
+        indicatorStyleSelect: root.querySelector('.indicator-style-select'),
+        indicatorAddBtn: root.querySelector('.indicator-add-btn'),
+        srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
+        volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
+        macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
+        gexToggleCheckbox: root.querySelector('.gex-toggle-checkbox'),
+        gexOverlayContainer: root.querySelector('.gex-overlay-container'),
+        gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
+        gexPutWallLabel: root.querySelector('.gex-put-wall-label'),
+        indicatorList: root.querySelector('.indicator-list'),
+      };
+
+      // Reflect the restored (or default) symbol/timeframe in the actual
+      // input controls, so the UI matches what's about to load instead of
+      // showing the hardcoded HTML default (e.g. input still says "SPY"
+      // while a restored TSLA chart loads underneath it).
+      els.tickerInput.value = initialSymbol;
+      els.timeframeSelect.value = initialInterval;
+      els.srToggleCheckbox.checked = initialSrEnabled;
+      els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
+      els.gexToggleCheckbox.checked = initialGexEnabled;
+      els.macdToggleCheckbox.checked = initialMacdEnabled;
+
+      const chart = LightweightCharts.createChart(els.chartContainer, {
+        autoSize: true,
+        layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc', attributionLogo: false },
+        grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          barSpacing: 8,
+          tickMarkFormatter: (time, tickMarkType) => formatChartLocalTime(time, tickMarkType),
+        },
+        localization: {
+          timeFormatter: (time) => formatChartLocalTime(time),
+        },
+        // Four vertical bands sharing this one chart: price (top ~50%),
+        // volume, RSI, MACD (bottom-most band).
+        rightPriceScale: { scaleMargins: { top: 0.05, bottom: 0.45 } },
+      });
+
+      const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#00c853',
+        downColor: '#ff5252',
+        borderVisible: false,
+        wickUpColor: '#00c853',
+        wickDownColor: '#ff5252',
+      });
+
+      const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.57, bottom: 0.32 } });
+
+      const RSI_PERIOD = 14;
+      const rsiSeries = chart.addLineSeries({
+        color: '#ba68c8',
+        lineWidth: 2,
+        priceScaleId: 'rsi',
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'RSI',
+      });
+      chart.priceScale('rsi').applyOptions({ scaleMargins: { top: 0.70, bottom: 0.17 } });
+      // RSI's own scale is fixed 0-100 (not auto-fit to data), so the
+      // 70/30 reference lines always sit at their real, meaningful levels.
+      rsiSeries.applyOptions({ autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
+      rsiSeries.createPriceLine({ price: 70, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
+      rsiSeries.createPriceLine({ price: 30, color: '#8fa0be', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false });
+
+      // MACD (12, 26, 9) - histogram (MACD minus signal) plus the two
+      // lines themselves, all sharing one bottom-most band below RSI.
+      const MACD_FAST = 12;
+      const MACD_SLOW = 26;
+      const MACD_SIGNAL = 9;
+      const macdHistSeries = chart.addHistogramSeries({
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      const macdLineSeries = chart.addLineSeries({
+        color: '#42a5f5',
+        lineWidth: 1,
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: 'MACD',
+      });
+      const macdSignalSeries = chart.addLineSeries({
+        color: '#ff9800',
+        lineWidth: 1,
+        priceScaleId: 'macd',
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      chart.priceScale('macd').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+
+
+      const panel = {
+        index,
+        symbol: initialSymbol,
+        active: true,
+        hasLoadedOnce: false,
+        pendingWatchExpiration: null,
+        pendingIndicatorRestore: saved?.indicators || [],
+        srLines: [], // currently-drawn support/resistance price lines - cleared and redrawn on each recompute
+        sr15mBars: [], // {time, open, high, low, close} - fixed 15m bars for S/R, independent of the chart's displayed timeframe
+        sr15mBarTime: null,
+        sr15mBarOpen: 0,
+        sr15mBarHigh: 0,
+        sr15mBarLow: 0,
+        srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
+        srEnabled: initialSrEnabled,
+        volumeProfileEnabled: initialVolumeProfileEnabled,
+        gexEnabled: initialGexEnabled,
+        macdEnabled: initialMacdEnabled,
+        chart,
+        candlestickSeries,
+        volumeSeries,
+        rsiSeries,
+        macdHistSeries,
+        macdLineSeries,
+        macdSignalSeries,
+        indicators: [], // [{id, type, period, lineStyle, lineType, color, series, currentValue}] - fully user-managed
+        closeHistory: [],
+        previousClose: null,
+        bigFlowEnabled: true,
+        interval: initialInterval, // sent to the backend - matches the Timeframe dropdown's value
+        intervalSeconds: INTERVAL_SECONDS[initialInterval] || 60, // used to bucket live ticks into the right candle width
+        flowMarkers: [],
+        lastBarTime: null,
+        lastBarPrice: 0,
+        currentBarVolume: 0,
+        lastBarOpen: 0,
+        els,
+        ws: null,
+        wsQueue: [],
+      };
+
+      function connectWS() {
+        panel.wsConnectCount = (panel.wsConnectCount || 0) + 1;
+        console.log(`[ws:${panel.symbol}] connectWS() call #${panel.wsConnectCount} at ${new Date().toLocaleTimeString()}`);
+
+        panel.ws = new WebSocket(BACKEND_WS);
+
+        panel.ws.onopen = () => {
+          console.log(`[ws:${panel.symbol}] onopen fired (connect #${panel.wsConnectCount}), hasLoadedOnce=${panel.hasLoadedOnce}`);
+          panel.wsQueue.forEach((m) => panel.ws.send(JSON.stringify(m)));
+          panel.wsQueue = [];
+
+          if (panel.hasLoadedOnce && panel.active) {
+            console.warn(`[ws:${panel.symbol}] RECONNECT-RESEND firing (connect #${panel.wsConnectCount}) - this duplicates the normal load's own subscribe if that already happened`);
+            panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
+            const currentExpiration = els.expirationSelect.value;
+            if (currentExpiration) panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration: currentExpiration });
+          }
+        };
+
+        panel.ws.onmessage = (event) => {
+          let msg;
+          try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+          panel.wsMsgCount = (panel.wsMsgCount || 0) + 1;
+          if (msg.type === 'flow') panel.wsFlowCount = (panel.wsFlowCount || 0) + 1;
+          const nowStr = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+          if (els.wsDebug) els.wsDebug.innerText = `#${panel.wsMsgCount} ${msg.type} @ ${nowStr} (flow seen: ${panel.wsFlowCount || 0})`;
+
+          if (msg.type === 'price' && msg.symbol === panel.symbol) {
+            panel.handlePriceTick(msg.price, msg.timeMs, msg.open, msg.high, msg.low, msg.size, msg.volume);
+          } else if (msg.type === 'flow' && msg.kind === 'bigflow') {
+            const bigFlowThreshold = BIG_FLOW_MAJOR_SYMBOLS.has(panel.symbol) ? BIG_FLOW_THRESHOLD_MAJOR : BIG_FLOW_THRESHOLD_OTHER;
+            if (msg.premium < bigFlowThreshold) return;
+            // Big Flow watches several expirations, one of which is often
+            // the SAME one currently selected in the dropdown - without
+            // this check, a trade on that shared expiration shows up
+            // twice: once via the normal single-expiration flow, once
+            // via this bigflow path. Skip it here since the normal path
+            // already displays it.
+            if (msg.expiration === els.expirationSelect.value) return;
+            panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side, formatExpirationLabel(msg.expiration));
+          } else if (msg.type === 'flow') {
+            if (msg.premium < MIN_FLOW_PREMIUM) return;
+            panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side);
+          } else if (msg.type === 'flow_watching') {
+            console.log(`[flow:${panel.symbol}] watching ${msg.contractCount} contracts, expiration ${msg.expiration}`);
+            if (msg.expiration === panel.pendingWatchExpiration) panel.pendingWatchExpiration = null;
+          } else if (msg.type === 'big_flow_watching') {
+            console.log(`[bigflow:${panel.symbol}] watching ${msg.contractCount} contracts across multiple expirations`);
+          } else if (msg.type === 'stock_flow' && msg.symbol === panel.symbol) {
+            panel.addStockFlowMarker(msg.size, msg.dollarValue, msg.timeMs, msg.side, msg.sourceSymbol, msg.standardEquivalentSize);
+          } else if (msg.type === 'flow_error') {
+            console.error(`[flow:${panel.symbol}] ${msg.error}`);
+            panel.pendingWatchExpiration = null;
+          } else if (msg.type === 'price_feed_status') {
+            if (isFuturesTicker(panel.symbol)) return;
+            if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
+            else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
+            else panel.setStatus('Disconnected');
+          }
+        };
+
+        panel.ws.onerror = (err) => console.error(`[ws:${panel.symbol}] error on connect #${panel.wsConnectCount}`, err);
+        panel.ws.onclose = (closeEvent) => {
+          console.warn(`[ws:${panel.symbol}] onclose fired (connect #${panel.wsConnectCount}) code=${closeEvent.code} reason=${closeEvent.reason || 'none'} wasClean=${closeEvent.wasClean}`);
+          panel.setStatus('Disconnected');
+          setTimeout(connectWS, 2000);
+        };
+      }
+      connectWS();
+
+      panel.sendWS = function (msg) {
+        if (panel.ws && panel.ws.readyState === WebSocket.OPEN) {
+          panel.ws.send(JSON.stringify(msg));
+        } else {
+          panel.wsQueue.push(msg);
+        }
+      };
+
+      panel.setStatus = function (text, bg) {
+        els.statusBadge.innerText = text;
+        if (bg) els.statusBadge.style.backgroundColor = bg;
+      };
+
+      panel.showChartError = function (message) {
+        if (!message) { els.chartErrorBanner.style.display = 'none'; return; }
+        els.chartErrorBanner.innerText = message;
+        els.chartErrorBanner.style.display = 'block';
+        console.error(`[chart:${panel.symbol}]`, message);
+      };
+
+      panel.updatePercentChange = function (price) {
+        if (!panel.previousClose) {
+          els.tickerChange.innerText = '';
+          return;
+        }
+        const pct = ((price - panel.previousClose) / panel.previousClose) * 100;
+        const sign = pct >= 0 ? '+' : '';
+        els.tickerChange.innerText = `${sign}${pct.toFixed(2)}%`;
+        els.tickerChange.style.color = pct >= 0 ? '#00c853' : '#ff5252';
+      };
+
+      panel.centerLastCandle = function () {
+        const width = els.chartContainer.clientWidth || 600;
+        const actualBars = Math.max(1, panel.closeHistory.length);
+        const targetVisibleBars = Math.min(200, actualBars);
+        const newBarSpacing = Math.max(2, Math.min(20, width / targetVisibleBars));
+        // Roughly half the visible bar count as empty space on the right -
+        // puts the last candle near the center of the screen instead of
+        // hugging the right edge, so the volume profile overlay (which
+        // anchors to the right and extends leftward) has clean room to
+        // sit in without overlapping recent price action.
+        const rightOffset = Math.round(targetVisibleBars / 2);
+        chart.timeScale().applyOptions({ barSpacing: newBarSpacing, rightOffset });
+        chart.timeScale().scrollToPosition(rightOffset, false);
+        chart.priceScale('right').applyOptions({ autoScale: true });
+      };
+
+      panel.pause = function () {
+        if (!panel.active) return;
+        panel.active = false;
+        panel.sendWS({ type: 'unsubscribe_price' });
+        panel.sendWS({ type: 'unwatch_flow' });
+      };
+
+      panel.resume = function () {
+        if (panel.active) return;
+        panel.active = true;
+        panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
+        const currentExpiration = els.expirationSelect.value;
+        if (currentExpiration) panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration: currentExpiration });
+        panel.centerLastCandle();
+      };
+
+      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel, skipCap) {
+        const isCall = type === 'CALL';
+        const card = document.createElement('div');
+        card.className = `flow-card ${isCall ? 'call' : 'put'}${expirationLabel ? ' bigflow' : ''}`;
+        card.innerHTML = `
+          <div class="flow-details">
+            ${expirationLabel ? `<span class="flow-bigflow-tag">ALL EXP &middot; ${expirationLabel}</span>` : ''}
+            <span class="flow-strike">${panel.symbol} ${strike} ${type}</span>
+            <span style="color: #8fa0be; font-size: 11px;">${sideLabel || 'BOUGHT'}${timeStr ? ' &middot; ' + timeStr : ''}</span>
+          </div>
+          <span class="flow-premium">${premiumStr}</span>
+        `;
+        els.flowList.prepend(card);
+        if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+      };
+
+      // Flow events (especially ones replayed from the server's rolling
+      // history buffer on page load / reconnect) carry the REAL time the
+      // trade happened, which can be well in the past - markers were
+      // previously always pinned to panel.lastBarTime, so a whole batch
+      // of replayed history all visually landed on the current candle.
+      // This buckets the real timestamp into the chart's own interval,
+      // then snaps to the closest candle that actually exists on the
+      // chart (via closeHistory) - a marker's time has to match a real
+      // data point to render, and thin/gappy periods mean the exact
+      // bucket doesn't always have a candle.
+      panel.resolveMarkerTime = function (timestampMs) {
+        const history = panel.closeHistory;
+        if (!timestampMs || !panel.intervalSeconds || !history || !history.length) return panel.lastBarTime;
+        const tradeTime = Math.floor(timestampMs / 1000);
+        const bucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
+        if (bucket <= history[0].time) return history[0].time;
+        if (bucket >= history[history.length - 1].time) return history[history.length - 1].time;
+        let candidate = history[0].time;
+        for (let i = 0; i < history.length; i++) {
+          if (history[i].time <= bucket) candidate = history[i].time;
+          else break;
+        }
+        return candidate;
+      };
+
+      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel, skipCap) {
+        if (!panel.lastBarTime) return;
+
+        const isCall = type === 'CALL';
+        const formattedPrem = `$${(premiumVal / 1000).toFixed(0)}k`;
+        const sideLabel = side || 'BOUGHT';
+        const timeStr = timestamp ? formatTradeTime(timestamp) : '';
+
+        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel, skipCap);
+
+        if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
+
+        panel.flowMarkers.push({
+          time: panel.resolveMarkerTime(timestamp),
+          position: isCall ? 'belowBar' : 'aboveBar',
+          color: isCall ? '#00c853' : '#ff5252',
+          shape: isCall ? 'arrowUp' : 'arrowDown',
+          text: `${expirationLabel ? `[${expirationLabel}] ` : ''}${sideLabel === 'SOLD' ? 'S' : 'B'} ${type} $${strike} (${formattedPrem})`,
+          size: MARKER_SIZE,
+          isCall,
+          side: sideLabel,
+        });
+        if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
+
+        candlestickSeries.setMarkers(panel.flowMarkers);
+      };
+
+      // Large trades on the underlying STOCK's shares (not options) -
+      // separate from the option-flow functions above since shares don't
+      // have a strike/type/expiration, just size and dollar value.
+      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol, standardEquivalentSize, skipCap) {
+        if (!panel.lastBarTime) return;
+
+        const isFutures = isFuturesTicker(panel.symbol);
+        const unitLabel = isFutures ? 'CTs' : 'sh';
+        const tagLabel = isFutures ? '' : 'SHARES'; // futures cards drop the tag entirely - the "NQU6: X CTs" format is self-explanatory
+        const isBuy = side === 'BUY';
+        const formattedVal = dollarValue >= 1_000_000 ? `$${(dollarValue / 1_000_000).toFixed(2)}M` : `$${(dollarValue / 1000).toFixed(0)}k`;
+        const timeStr = timestamp ? formatTradeTime(timestamp) : '';
+        // Present when a micro/standard sibling contract's trade is being
+        // shown under this panel's symbol - without this, per-contract
+        // dollar math looks inconsistent (a micro contract's multiplier
+        // is 1/10th the standard one, so far more contracts are needed
+        // for the same dollar value).
+        const viaStr = sourceSymbol ? ` (via ${sourceSymbol})` : '';
+
+        // Futures: contract count (standard-equivalent, so a micro fill
+        // shows on the same scale as the standard contract), formatted
+        // as "NQU6: 4 CTs" with the dollar value in its own colored
+        // span (primaryText below) - same layout as stocks, so the $
+        // total gets the same green(buy)/red(sell) coloring via the
+        // existing .flow-card.call/.put .flow-premium CSS rules.
+        const contractCount = standardEquivalentSize != null ? standardEquivalentSize : shareSize;
+        const isWholeNumber = Math.abs(contractCount - Math.round(contractCount)) < 0.05;
+        const formattedContracts = isWholeNumber ? Math.round(contractCount).toLocaleString('en-US') : contractCount.toFixed(1);
+        const formattedSize = shareSize.toLocaleString('en-US');
+
+        const primaryText = formattedVal;
+        const secondaryLine = `${isBuy ? 'BOUGHT' : 'SOLD'}${timeStr ? ' &middot; ' + timeStr : ''}`;
+        const detailLine = isFutures
+          ? `${panel.symbol}: ${formattedContracts} ${unitLabel}${viaStr}`
+          : `${panel.symbol} ${formattedSize} ${unitLabel}${viaStr}`;
+
+        const card = document.createElement('div');
+        card.className = `flow-card stockflow ${isBuy ? 'call' : 'put'}`;
+        card.innerHTML = `
+          <div class="flow-details">
+            ${tagLabel ? `<span class="flow-stockflow-tag">${tagLabel}</span>` : ''}
+            <span class="flow-strike">${detailLine}</span>
+            <span style="color: #8fa0be; font-size: 11px;">${secondaryLine}</span>
+          </div>
+          ${primaryText ? `<span class="flow-premium">${primaryText}</span>` : ''}
+        `;
+        els.flowList.prepend(card);
+        if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+
+        // Futures large-trades get their own, higher, separately-adjustable
+        // chart-marker floor - the sidebar still shows everything the
+        // server already decided was worth broadcasting ($2M+), but the
+        // chart itself only gets an arrow above this floor, to avoid the
+        // crowding that comes from combining ES/MES (or NQ/MNQ) flow into
+        // one busy panel.
+        if (isFutures && dollarValue < FUTURES_CHART_MARKER_FLOOR) return;
+
+        panel.flowMarkers.push({
+          time: panel.resolveMarkerTime(timestamp),
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          color: isBuy ? '#00c853' : '#ff5252',
+          shape: isBuy ? 'arrowUp' : 'arrowDown',
+          text: isFutures
+            ? `${isBuy ? 'B' : 'S'} ${formattedContracts} ${unitLabel}${viaStr} (${formattedVal})`
+            : `${isBuy ? 'B' : 'S'} ${formattedSize} ${unitLabel}${viaStr} (${formattedVal})`,
+          size: MARKER_SIZE,
+        });
+        if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
+
+        candlestickSeries.setMarkers(panel.flowMarkers);
+      };
+
+      // Fetches the fixed 15m bar history S/R runs on (independent of
+      // whatever timeframe the chart itself is displaying) and seeds the
+      // running-bar state so live ticks continue building from the right
+      // baseline. Called on initial load and every ticker switch.
+      panel.fetchSr15mBars = async function (symbol) {
+        try {
+          const result = await fetchHistoricalBars(symbol, SR_INTERVAL);
+          const bars = (result.bars || []).slice(-SR_LOOKBACK_BARS);
+          panel.sr15mBars = bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }));
+          const last = panel.sr15mBars[panel.sr15mBars.length - 1];
+          if (last) {
+            panel.sr15mBarTime = last.time;
+            panel.sr15mBarOpen = last.open;
+            panel.sr15mBarHigh = last.high;
+            panel.sr15mBarLow = last.low;
+          } else {
+            panel.sr15mBarTime = null;
+          }
+        } catch (err) {
+          console.error(`[sr15m:${symbol}] failed to load 15m bar history:`, err);
+          panel.sr15mBars = [];
+          panel.sr15mBarTime = null;
+        }
+      };
+
+      // Maintains panel.sr15mBars from live ticks, entirely independent of
+      // the displayed chart's timeframe/bucket - this is what keeps S/R
+      // levels stable across TF switches instead of jumping around. Only
+      // triggers a recompute when a 15m bar actually CLOSES, not on every
+      // tick - same "stable, not twitchy" intent the original design had.
+      panel.updateSr15mBars = function (tradePrice, timeMs, hasAggregateRange, aggHigh, aggLow) {
+        const tradeTime = Math.floor(timeMs / 1000);
+        const bucket = Math.floor(tradeTime / SR_INTERVAL_SECONDS) * SR_INTERVAL_SECONDS;
+        if (panel.sr15mBarTime != null && bucket < panel.sr15mBarTime) return; // late/stale update
+
+        const high = hasAggregateRange ? aggHigh : tradePrice;
+        const low = hasAggregateRange ? aggLow : tradePrice;
+
+        if (bucket > panel.sr15mBarTime) {
+          panel.sr15mBarTime = bucket;
+          panel.sr15mBarOpen = tradePrice;
+          panel.sr15mBarHigh = high;
+          panel.sr15mBarLow = low;
+          panel.sr15mBars.push({ time: bucket, open: tradePrice, high, low, close: tradePrice });
+          if (panel.sr15mBars.length > SR_LOOKBACK_BARS) panel.sr15mBars.shift();
+          panel.computeAndDrawSupportResistance();
+        } else {
+          panel.sr15mBarHigh = Math.max(panel.sr15mBarHigh, high);
+          panel.sr15mBarLow = Math.min(panel.sr15mBarLow, low);
+          const last = panel.sr15mBars[panel.sr15mBars.length - 1];
+          if (last) {
+            last.high = panel.sr15mBarHigh;
+            last.low = panel.sr15mBarLow;
+            last.close = tradePrice;
+          }
+        }
+      };
+
+      panel.handlePriceTick = function (tradePrice, timeMs, aggOpen, aggHigh, aggLow, tradeSize, aggVolume) {
+        // Defensive guard - a crash here (tradePrice not a real number)
+        // was observed in practice and its exact cause isn't confirmed
+        // yet. This stops it from breaking the whole tick (which was
+        // also silently preventing flow/RSI/MA updates from running),
+        // and logs the actual bad value so the real source can be found.
+        if (typeof tradePrice !== 'number' || !Number.isFinite(tradePrice)) {
+          console.error(`[price:${panel.symbol}] handlePriceTick got a non-numeric tradePrice:`, tradePrice, 'timeMs:', timeMs);
+          return;
+        }
+        const tradeTime = Math.floor(timeMs / 1000);
+        const currentMinuteBucket = Math.floor(tradeTime / panel.intervalSeconds) * panel.intervalSeconds;
+        // A late-arriving update describing an already-superseded bucket
+        // (e.g. an AM message for a minute that finished just as newer
+        // trade ticks had already started the next bar) - ignore it
+        // entirely, including price/MA/RSI display, to avoid the price
+        // text and the candle disagreeing with each other.
+        if (panel.lastBarTime != null && currentMinuteBucket < panel.lastBarTime) return;
+
+        // Futures aggregates arrive as a complete already-formed bar (its
+        // own real open/high/low), not a single raw trade - using those
+        // directly avoids plotting a flat, zero-range sliver where the
+        // bar's actual range should be. Stocks (raw ticks via Finnhub)
+        // don't pass these, so they keep synthesizing range from
+        // individual tick comparisons as before.
+        const hasAggregateRange = aggHigh != null && aggLow != null;
+
+        // Independent of the displayed-chart bucket logic below - S/R now
+        // runs on its own fixed 15m series regardless of what TF is on
+        // screen (see panel.updateSr15mBars above).
+        panel.updateSr15mBars(tradePrice, timeMs, hasAggregateRange, aggHigh, aggLow);
+
+        if (currentMinuteBucket > panel.lastBarTime) {
+          panel.lastBarTime = currentMinuteBucket;
+          panel.lastBarOpen = hasAggregateRange && aggOpen != null ? aggOpen : tradePrice;
+          panel.currentBarHigh = hasAggregateRange ? aggHigh : tradePrice;
+          panel.currentBarLow = hasAggregateRange ? aggLow : tradePrice;
+          // New candle - volume starts fresh. An Aggregates message
+          // carries the bar's own authoritative running total (use it
+          // directly); a raw trade tick only knows about itself, so start
+          // the accumulator at this one trade's size.
+          panel.currentBarVolume = aggVolume != null ? aggVolume : (tradeSize || 0);
+          candlestickSeries.update({
+            time: currentMinuteBucket, open: panel.lastBarOpen, high: panel.currentBarHigh, low: panel.currentBarLow, close: tradePrice,
+          });
+          volumeSeries.update({
+            time: currentMinuteBucket,
+            value: panel.currentBarVolume,
+            color: tradePrice >= panel.lastBarOpen ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
+          });
+          panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
+        } else {
+          // Accumulate the TRUE high/low across every tick this bar has
+          // seen so far - comparing only the last two ticks (the
+          // previous bug) collapses the wick down to almost nothing,
+          // since most consecutive ticks don't move much on their own.
+          panel.currentBarHigh = Math.max(panel.currentBarHigh, hasAggregateRange ? aggHigh : tradePrice);
+          panel.currentBarLow = Math.min(panel.currentBarLow, hasAggregateRange ? aggLow : tradePrice);
+          // Same as above: an Aggregates snapshot REPLACES the running
+          // total (it already reflects everything up to now), a raw trade
+          // tick only ever ADDS its own size to what's already there.
+          panel.currentBarVolume = aggVolume != null ? aggVolume : (panel.currentBarVolume || 0) + (tradeSize || 0);
+          candlestickSeries.update({
+            time: panel.lastBarTime,
+            open: panel.lastBarOpen,
+            high: panel.currentBarHigh,
+            low: panel.currentBarLow,
+            close: tradePrice,
+          });
+          volumeSeries.update({
+            time: panel.lastBarTime,
+            value: panel.currentBarVolume,
+            color: tradePrice >= panel.lastBarOpen ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
+          });
+          if (panel.closeHistory.length > 0) {
+            panel.closeHistory[panel.closeHistory.length - 1].close = tradePrice;
+          }
+        }
+
+        const hist = panel.closeHistory;
+        // Live-update every user-added indicator. MA can update
+        // incrementally from the tail of history; EMA is inherently
+        // sequential/cumulative, so it's recomputed fully each tick
+        // (same approach RSI already uses) - cheap given the small
+        // array size, and avoids subtle incremental-state bugs.
+        panel.indicators.forEach((ind) => {
+          if (ind.type === 'EMA') {
+            const points = computeEMA(hist, ind.period);
+            ind.series.setData(points);
+            ind.currentValue = points.length ? points[points.length - 1].value : null;
+          } else {
+            if (hist.length < ind.period) { ind.currentValue = null; return; }
+            let sum = 0;
+            for (let i = hist.length - ind.period; i < hist.length; i++) sum += hist[i].close;
+            ind.currentValue = sum / ind.period;
+            ind.series.update({ time: panel.lastBarTime, value: ind.currentValue });
+          }
+        });
+        rsiSeries.setData(computeRSI(hist, RSI_PERIOD));
+        panel.updateMacd(hist);
+
+        els.tickerPrice.innerText = `$${tradePrice.toFixed(2)}`;
+        els.tickerPrice.style.color = tradePrice >= panel.lastBarPrice ? '#00c853' : '#ff5252';
+        panel.updatePercentChange(tradePrice);
+        panel.lastBarPrice = tradePrice;
+        panel.positionWallLabels();
+        panel.positionStrikeOverlay();
+        panel.positionGexOverlay();
+        panel.positionCandleTimer();
+        panel.positionSRLabels();
+      };
+
+      panel.callWallLine = null;
+      panel.putWallLine = null;
+      panel.callWallPrice = null;
+      panel.putWallPrice = null;
+      panel.highAreaLine = null;
+      panel.lowAreaLine = null;
+      panel.highAreaPrice = null;
+      panel.lowAreaPrice = null;
+      panel.wallRefreshTimer = null;
+      panel.strikeOverlayData = []; // [{strike, c, p, cPct, pPct, isWallRow}] - rendered by positionStrikeOverlay
+      panel.gexCallWallLine = null;
+      panel.gexPutWallLine = null;
+      panel.gexCallWallPrice = null;
+      panel.gexPutWallPrice = null;
+      panel.gexStrikeData = []; // [{strike, c, p, isWallRow}] - gamma x OI per strike, rendered by positionGexOverlay
+
+      let indicatorIdCounter = 0;
+      const INDICATOR_COLOR_PALETTE = ['#ffeb3b', '#2196f3', '#e91e63', '#00bcd4', '#ff9800', '#9c27b0', '#4caf50', '#f44336'];
+
+      panel.computeIndicatorPoints = function (indicator) {
+        return indicator.type === 'EMA' ? computeEMA(panel.closeHistory, indicator.period) : computeMA(panel.closeHistory, indicator.period);
+      };
+
+      panel.recomputeIndicator = function (indicator) {
+        const points = panel.computeIndicatorPoints(indicator);
+        indicator.series.setData(points);
+        indicator.currentValue = points.length ? points[points.length - 1].value : null;
+      };
+
+      panel.recomputeAllIndicators = function () {
+        panel.indicators.forEach((ind) => panel.recomputeIndicator(ind));
+      };
+
+      panel.renderIndicatorList = function () {
+        els.indicatorList.innerHTML = panel.indicators.length
+          ? panel.indicators.map((ind) => (
+              `<div class="indicator-list-row">` +
+              `<span class="indicator-swatch" style="background-color:${ind.color};"></span>` +
+              `<span class="indicator-list-label">${ind.type}${ind.period}</span>` +
+              `<button class="indicator-remove-btn" data-id="${ind.id}">&times;</button>` +
+              `</div>`
+            )).join('')
+          : 'No indicators added';
+      };
+
+      panel.addIndicator = function (type, period, lineStyle, lineType) {
+        const id = `ind${indicatorIdCounter++}`;
+        const color = INDICATOR_COLOR_PALETTE[panel.indicators.length % INDICATOR_COLOR_PALETTE.length];
+        const series = chart.addLineSeries({
+          color,
+          lineWidth: 2,
+          lineStyle,
+          lineType,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        const indicator = { id, type, period, lineStyle, lineType, color, series, currentValue: null };
+        panel.indicators.push(indicator);
+        panel.recomputeIndicator(indicator);
+        panel.renderIndicatorList();
+        saveChartSettings(panel);
+      };
+
+      panel.removeIndicator = function (id) {
+        const idx = panel.indicators.findIndex((ind) => ind.id === id);
+        if (idx === -1) return;
+        const ind = panel.indicators[idx];
+        chart.removeSeries(ind.series);
+        panel.indicators.splice(idx, 1);
+        panel.renderIndicatorList();
+        saveChartSettings(panel);
+      };
+
+      // Renders the always-visible per-strike overlay rows on the chart -
+      // called after every data refresh AND whenever the price->pixel
+      // mapping might have shifted (ticks, resize, pan/zoom), same
+      // tracking approach as the wall labels.
+      panel.positionStrikeOverlay = function () {
+        if (!panel.volumeProfileEnabled) {
+          els.strikeOverlayContainer.innerHTML = '';
+          return;
+        }
+        const height = els.chartContainer.clientHeight || 0;
+        const fmtK = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
+        const maxTotal = Math.max(1, ...panel.strikeOverlayData.map((d) => d.c + d.p));
+
+        els.strikeOverlayContainer.innerHTML = panel.strikeOverlayData.map((d) => {
+          const y = candlestickSeries.priceToCoordinate(d.strike);
+          if (y == null || y < 0 || y > height) return '';
+          const total = d.c + d.p;
+          const barWidthPct = (total / maxTotal) * 100;
+          const callSharePct = total > 0 ? (d.c / total) * 100 : 0;
+          const putSharePct = total > 0 ? (d.p / total) * 100 : 0;
+          return `<div class="strike-overlay-row${d.isWallRow ? ' wall-row' : ''}" style="top:${y}px;">` +
+            `<span class="strike-overlay-strike">${d.strike}</span>` +
+            `<div class="strike-overlay-bar-track">` +
+            `<div class="strike-overlay-bar-fill" style="width:${barWidthPct}%;">` +
+            `<div class="strike-overlay-bar-call" style="width:${callSharePct}%;"></div>` +
+            `<div class="strike-overlay-bar-put" style="width:${putSharePct}%;"></div>` +
+            `</div>` +
+            `<span class="strike-overlay-text">C:${fmtK(d.c)} <span class="strike-overlay-call-pct">(${d.cPct}%)</span> P:${fmtK(d.p)} <span class="strike-overlay-put-pct">(${d.pPct}%)</span></span>` +
+            `</div>` +
+            `</div>`;
+        }).join('');
+      };
+
+      // Mirrors positionStrikeOverlay exactly - same row/bar structure,
+      // rendered into the separate GEX container (own lane, own colors -
+      // see .gex-overlay-row CSS) so it can be shown alongside the volume
+      // profile for direct comparison, not just as a replacement for it.
+      panel.positionGexOverlay = function () {
+        if (!panel.gexEnabled) {
+          els.gexOverlayContainer.innerHTML = '';
+          return;
+        }
+        const height = els.chartContainer.clientHeight || 0;
+        const fmtGex = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0);
+        const maxTotal = Math.max(1, ...panel.gexStrikeData.map((d) => d.c + d.p));
+
+        els.gexOverlayContainer.innerHTML = panel.gexStrikeData.map((d) => {
+          const y = candlestickSeries.priceToCoordinate(d.strike);
+          if (y == null || y < 0 || y > height) return '';
+          const total = d.c + d.p;
+          const barWidthPct = (total / maxTotal) * 100;
+          const callSharePct = total > 0 ? (d.c / total) * 100 : 0;
+          const putSharePct = total > 0 ? (d.p / total) * 100 : 0;
+          return `<div class="strike-overlay-row gex-overlay-row${d.isWallRow ? ' wall-row' : ''}" style="top:${y}px;">` +
+            `<span class="strike-overlay-strike">${d.strike}</span>` +
+            `<div class="strike-overlay-bar-track">` +
+            `<div class="strike-overlay-bar-fill" style="width:${barWidthPct}%;">` +
+            `<div class="strike-overlay-bar-call" style="width:${callSharePct}%;"></div>` +
+            `<div class="strike-overlay-bar-put" style="width:${putSharePct}%;"></div>` +
+            `</div>` +
+            `<span class="strike-overlay-text">C:${fmtGex(d.c)} P:${fmtGex(d.p)}</span>` +
+            `</div>` +
+            `</div>`;
+        }).join('');
+      };
+
+      // Computes the "Call Wall" (strike with the most total call volume
+      // today) and "Put Wall" (same, for puts) from Tradier's full option
+      // chain - which already reports per-contract volume, so this is just
+      // aggregation, no gamma/Greeks math needed. Drawn as horizontal
+      // price lines on the candlestick chart.
+      // Repositions the floating wall labels to sit just above their
+      // line's current price level - called on every refresh, every live
+      // tick, and on resize, since autoScale means the price->pixel
+      // mapping shifts as new data comes in.
+      panel.positionWallLabels = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const sameStrike = panel.callWallPrice != null && panel.putWallPrice != null && panel.callWallPrice === panel.putWallPrice;
+
+        function positionOne(price, labelEl) {
+          if (price == null) { labelEl.style.display = 'none'; return; }
+          const y = candlestickSeries.priceToCoordinate(price);
+          if (y != null && y >= 0 && y <= height) {
+            labelEl.style.display = 'block';
+            labelEl.style.top = `${y}px`;
+          } else {
+            labelEl.style.display = 'none'; // off-screen (scrolled/zoomed away) - hide rather than show floating in the wrong place
+          }
+        }
+
+        positionOne(panel.callWallPrice, els.callWallLabel);
+        positionOne(panel.putWallPrice, els.putWallLabel);
+        positionOne(panel.highAreaPrice, els.highAreaLabel);
+        positionOne(panel.lowAreaPrice, els.lowAreaLabel);
+        positionOne(panel.gexCallWallPrice, els.gexCallWallLabel);
+        positionOne(panel.gexPutWallPrice, els.gexPutWallLabel);
+
+        // Both walls on the same strike would otherwise stack their
+        // labels directly on top of each other - flip Put Wall below
+        // the line so they stay readable side by side.
+        els.putWallLabel.classList.toggle('below-line', sameStrike);
+        const gexSameStrike = panel.gexCallWallPrice != null && panel.gexPutWallPrice != null && panel.gexCallWallPrice === panel.gexPutWallPrice;
+        els.gexPutWallLabel.classList.toggle('below-line', gexSameStrike);
+      };
+
+      // Recomputes and sets MACD data from the given bars, or clears all
+      // three series when the toggle is off - single place both the
+      // recompute call sites and the toggle checkbox go through.
+      panel.updateMacd = function (bars) {
+        if (!panel.macdEnabled) {
+          macdHistSeries.setData([]);
+          macdLineSeries.setData([]);
+          macdSignalSeries.setData([]);
+          return;
+        }
+        const macd = computeMACD(bars, MACD_FAST, MACD_SLOW, MACD_SIGNAL);
+        macdHistSeries.setData(macd.histogram);
+        macdLineSeries.setData(macd.macdLine);
+        macdSignalSeries.setData(macd.signalLine);
+      };
+
+      // Countdown to when the current (still-forming) candle closes and
+      // the next one starts, positioned right under the chart's native
+      // last-price label. Reuses the same time-bucketing logic the price
+      // tick handler uses to build candles, so it always agrees with what
+      // the chart itself considers "now"'s candle.
+      panel.positionCandleTimer = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const history = panel.closeHistory;
+        if (!panel.intervalSeconds || !history || !history.length || panel.lastBarPrice == null) {
+          els.candleTimer.style.display = 'none';
+          return;
+        }
+
+        const currentBarTime = history[history.length - 1].time; // start of the still-forming candle, in seconds
+        const closeTime = currentBarTime + panel.intervalSeconds;
+        const remaining = Math.max(0, closeTime - Math.floor(Date.now() / 1000));
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        els.candleTimer.innerText = `${mins}:${String(secs).padStart(2, '0')}`;
+
+        const bars = candlestickSeries.data();
+        const lastBar = bars[bars.length - 1];
+        const isUp = lastBar ? panel.lastBarPrice >= lastBar.open : true;
+        els.candleTimer.style.backgroundColor = isUp ? '#00c853' : '#ff5252';
+
+        const y = candlestickSeries.priceToCoordinate(panel.lastBarPrice);
+        if (y != null && y >= 0 && y <= height) {
+          els.candleTimer.style.display = 'block';
+          els.candleTimer.style.top = `${y + 9}px`; // flush against the bottom edge of the native price label box, so the color reads as one continuous block
+        } else {
+          els.candleTimer.style.display = 'none';
+        }
+      };
+
+      // Finds swing highs/lows over the recent lookback, clusters nearby
+      // ones into levels, scores each cluster by touch count (weighted
+      // toward more recent touches), and draws the strongest few above and
+      // below current price as dashed price lines. Called once per new
+      // candle (see the price-tick handler) rather than every tick.
+      panel.computeAndDrawSupportResistance = function () {
+        // Old lines/labels first, always - if this is a toggle-off, that
+        // alone is the whole job; if it's a normal recompute, stale ones
+        // shouldn't linger underneath the new ones anyway.
+        for (const line of panel.srLines) candlestickSeries.removePriceLine(line);
+        panel.srLines = [];
+        els.srLabelContainer.innerHTML = '';
+        panel.srLevels = [];
+        if (!panel.srEnabled) return;
+
+        const bars = panel.sr15mBars.slice(-SR_LOOKBACK_BARS);
+        const n = SR_FRACTAL_N;
+
+        // Need at least a full window on both sides of some candidate
+        // bars, plus a handful of candidates - otherwise skip rather than
+        // draw levels from too little data.
+        if (bars.length < n * 2 + 5 || panel.lastBarPrice == null) return;
+
+        const swingHighs = [];
+        const swingLows = [];
+        // Exclude the last N bars from being CENTERS - a swing point needs
+        // N confirmed neighbors on its right side too, which the most
+        // recent bars don't have yet.
+        for (let i = n; i < bars.length - n; i++) {
+          let isHigh = true;
+          let isLow = true;
+          for (let j = i - n; j <= i + n; j++) {
+            if (j === i) continue;
+            if (bars[j].high > bars[i].high) isHigh = false;
+            if (bars[j].low < bars[i].low) isLow = false;
+          }
+          if (isHigh) swingHighs.push({ price: bars[i].high, index: i });
+          if (isLow) swingLows.push({ price: bars[i].low, index: i });
+        }
+
+        const lastIndex = bars.length - 1;
+        const tolerance = panel.lastBarPrice * SR_CLUSTER_TOLERANCE_PCT;
+
+        // Greedy clustering: sort by price, then fold each point into the
+        // running cluster if it's within tolerance of that cluster's
+        // average, else start a new cluster.
+        function clusterPoints(points) {
+          const sorted = [...points].sort((a, b) => a.price - b.price);
+          const clusters = [];
+          for (const pt of sorted) {
+            const current = clusters[clusters.length - 1];
+            if (current && Math.abs(pt.price - current.avgPrice) <= tolerance) {
+              current.points.push(pt);
+              current.avgPrice = current.points.reduce((sum, p) => sum + p.price, 0) / current.points.length;
+            } else {
+              clusters.push({ points: [pt], avgPrice: pt.price });
+            }
+          }
+          // Recency-weighted touch score - a touch 5 bars ago counts for
+          // much more than one 250 bars ago, so a level that's gone stale
+          // naturally loses out to more current structure over time.
+          return clusters.map((c) => ({
+            price: c.avgPrice,
+            score: c.points.reduce((sum, p) => sum + 1 / (1 + (lastIndex - p.index) / 50), 0),
+          }));
+        }
+
+        const resistanceCandidates = clusterPoints(swingHighs)
+          .filter((c) => c.price > panel.lastBarPrice)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, SR_LEVELS_PER_SIDE)
+          .sort((a, b) => a.price - b.price); // closest-to-price first for R1/R2 labeling
+
+        const supportCandidates = clusterPoints(swingLows)
+          .filter((c) => c.price < panel.lastBarPrice)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, SR_LEVELS_PER_SIDE)
+          .sort((a, b) => b.price - a.price); // closest-to-price first for S1/S2 labeling
+
+        resistanceCandidates.forEach((c, i) => {
+          panel.srLines.push(candlestickSeries.createPriceLine({
+            price: c.price,
+            color: '#ff5252',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: false,
+          }));
+          const labelEl = document.createElement('div');
+          labelEl.className = 'sr-label resistance-label';
+          labelEl.innerText = `R${i + 1}`;
+          els.srLabelContainer.appendChild(labelEl);
+          panel.srLevels.push({ price: c.price, el: labelEl });
+        });
+
+        supportCandidates.forEach((c, i) => {
+          panel.srLines.push(candlestickSeries.createPriceLine({
+            price: c.price,
+            color: '#00c853',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: false,
+          }));
+          const labelEl = document.createElement('div');
+          labelEl.className = 'sr-label support-label';
+          labelEl.innerText = `S${i + 1}`;
+          els.srLabelContainer.appendChild(labelEl);
+          panel.srLevels.push({ price: c.price, el: labelEl });
+        });
+
+        panel.positionSRLabels();
+      };
+
+      // Repositions the floating R1/R2/S1/S2 labels to sit right on top of
+      // their line - called after every recompute, and on every price
+      // tick/resize/pan/zoom since the line's Y pixel position shifts with
+      // all of those even though the price level itself hasn't changed.
+      panel.positionSRLabels = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        for (const level of panel.srLevels) {
+          const y = candlestickSeries.priceToCoordinate(level.price);
+          if (y != null && y >= 0 && y <= height) {
+            level.el.style.display = 'block';
+            level.el.style.top = `${y}px`;
+          } else {
+            level.el.style.display = 'none'; // off-screen (scrolled/zoomed away)
+          }
+        }
+      };
+
+      panel.refreshCallPutWalls = async function (expiration) {
+        if (!expiration || isFuturesTicker(panel.symbol)) return;
+
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+          const callVolumeByStrike = new Map();
+          const putVolumeByStrike = new Map();
+          // GEX: gamma x open_interest x 100 (contract multiplier) per
+          // strike - standard convention, call-side and put-side kept as
+          // separate positive magnitudes here (the calls-positive/
+          // puts-negative NET GEX sign convention only matters if you're
+          // summing them together, which this doesn't - each side's own
+          // wall is just "which strike has the most gamma exposure on
+          // that side"). Requires the chain to include greeks (?greeks=
+          // true on the backend's Tradier request) - a contract missing
+          // gamma/OI is silently skipped rather than breaking the whole
+          // computation.
+          const callGexByStrike = new Map();
+          const putGexByStrike = new Map();
+          for (const o of data.options || []) {
+            const vol = parseFloat(o.volume) || 0;
+            if (vol > 0) {
+              const map = o.option_type === 'call' ? callVolumeByStrike : putVolumeByStrike;
+              map.set(o.strike, (map.get(o.strike) || 0) + vol);
+            }
+
+            const gamma = o.greeks?.gamma;
+            const oi = o.open_interest;
+            if (gamma != null && oi > 0) {
+              const gexValue = gamma * oi * 100;
+              const gexMap = o.option_type === 'call' ? callGexByStrike : putGexByStrike;
+              gexMap.set(o.strike, (gexMap.get(o.strike) || 0) + gexValue);
+            }
+          }
+
+          const topStrike = (map) => {
+            let best = null;
+            let bestVol = -1;
+            for (const [strike, vol] of map) {
+              if (vol > bestVol) { bestVol = vol; best = strike; }
+            }
+            return best;
+          };
+
+          const callWall = topStrike(callVolumeByStrike);
+          const putWall = topStrike(putVolumeByStrike);
+          const gexCallWall = topStrike(callGexByStrike);
+          const gexPutWall = topStrike(putGexByStrike);
+
+          const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
+          const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
+          const totalVolumeByStrike = new Map();
+          for (const s of sortedStrikes) {
+            totalVolumeByStrike.set(s, (callVolumeByStrike.get(s) || 0) + (putVolumeByStrike.get(s) || 0));
+          }
+          // High Area / Low Area: search up to 15 strikes above/below ATM
+          // (ATM = strike closest to current price), then find the
+          // FARTHEST-OUT strike on each side whose total volume still
+          // clears ~35% of the busiest strike's volume in that range -
+          // thin strikes beyond real activity get ignored, even if a
+          // low-volume strike sits between ATM and the real boundary.
+          // The 35% figure is a calibrated heuristic, not a universal
+          // formula - it may need tuning against more real examples.
+          let atmIdx = 0;
+          let bestDist = Infinity;
+          sortedStrikes.forEach((s, i) => {
+            const d = Math.abs(s - panel.lastBarPrice);
+            if (d < bestDist) { bestDist = d; atmIdx = i; }
+          });
+
+          const AREA_SEARCH_RADIUS = 15;
+          const AREA_VOLUME_THRESHOLD_PCT = 0.35;
+          const searchLowIdx = Math.max(0, atmIdx - AREA_SEARCH_RADIUS);
+          const searchHighIdx = Math.min(sortedStrikes.length - 1, atmIdx + AREA_SEARCH_RADIUS);
+          const candidateStrikes = sortedStrikes.slice(searchLowIdx, searchHighIdx + 1);
+          const maxVolInRange = Math.max(1, ...candidateStrikes.map((s) => totalVolumeByStrike.get(s) || 0));
+          const areaThreshold = maxVolInRange * AREA_VOLUME_THRESHOLD_PCT;
+
+          let highArea = sortedStrikes[atmIdx];
+          for (let i = searchHighIdx; i > atmIdx; i--) {
+            if ((totalVolumeByStrike.get(sortedStrikes[i]) || 0) >= areaThreshold) { highArea = sortedStrikes[i]; break; }
+          }
+          let lowArea = sortedStrikes[atmIdx];
+          for (let i = searchLowIdx; i < atmIdx; i++) {
+            if ((totalVolumeByStrike.get(sortedStrikes[i]) || 0) >= areaThreshold) { lowArea = sortedStrikes[i]; break; }
+          }
+
+          const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : `${n}`;
+          const pctPair = (strike) => {
+            const c = callVolumeByStrike.get(strike) || 0;
+            const p = putVolumeByStrike.get(strike) || 0;
+            const total = c + p;
+            const cPct = total > 0 ? ((c / total) * 100).toFixed(0) : '0';
+            const pPct = total > 0 ? ((p / total) * 100).toFixed(0) : '0';
+            return { c, p, cPct, pPct };
+          };
+
+          if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
+          if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+          if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+          if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
+          if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
+          if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
+
+          panel.callWallPrice = callWall;
+          panel.putWallPrice = putWall;
+          panel.highAreaPrice = highArea;
+          panel.lowAreaPrice = lowArea;
+          panel.gexCallWallPrice = gexCallWall;
+          panel.gexPutWallPrice = gexPutWall;
+
+          if (highArea != null) {
+            panel.highAreaLine = candlestickSeries.createPriceLine({
+              price: highArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.highAreaLabel.innerText = `High Area: ${highArea}`;
+          }
+          if (lowArea != null) {
+            panel.lowAreaLine = candlestickSeries.createPriceLine({
+              price: lowArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
+          }
+
+          if (callWall != null) {
+            panel.callWallLine = candlestickSeries.createPriceLine({
+              price: callWall,
+              color: '#ff5252',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.callWallLabel.innerText = `Call Wall ${callWall}`;
+          }
+          if (putWall != null) {
+            panel.putWallLine = candlestickSeries.createPriceLine({
+              price: putWall,
+              color: '#00c853',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.putWallLabel.innerText = `Put Wall ${putWall}`;
+          }
+          if (gexCallWall != null) {
+            panel.gexCallWallLine = candlestickSeries.createPriceLine({
+              price: gexCallWall,
+              color: '#ffa726',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.gexCallWallLabel.innerText = `GEX Call Wall ${gexCallWall}`;
+          }
+          if (gexPutWall != null) {
+            panel.gexPutWallLine = candlestickSeries.createPriceLine({
+              price: gexPutWall,
+              color: '#29b6f6',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.gexPutWallLabel.innerText = `GEX Put Wall ${gexPutWall}`;
+          }
+          panel.positionWallLabels();
+
+          // Strike range for the overlay - Low Area to High Area, the
+          // same range the two blue lines mark (now the ATM±7 window).
+          let nearby = sortedStrikes;
+          if (highArea != null && lowArea != null) {
+            const lowIdx = sortedStrikes.indexOf(lowArea);
+            const highIdx = sortedStrikes.indexOf(highArea);
+            nearby = sortedStrikes.slice(lowIdx, highIdx + 1);
+          }
+
+          panel.strikeOverlayData = nearby.map((strike) => {
+            const { c, p, cPct, pPct } = pctPair(strike);
+            return { strike, c, p, cPct, pPct, isWallRow: strike === callWall || strike === putWall };
+          });
+          panel.gexStrikeData = nearby.map((strike) => ({
+            strike,
+            c: callGexByStrike.get(strike) || 0,
+            p: putGexByStrike.get(strike) || 0,
+            isWallRow: strike === gexCallWall || strike === gexPutWall,
+          }));
+          panel.positionStrikeOverlay();
+          panel.positionGexOverlay();
+          panel.positionCandleTimer();
+          panel.positionSRLabels();
+        } catch (err) {
+          console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
+          panel.strikeOverlayData = [];
+          panel.gexStrikeData = [];
+          els.strikeOverlayContainer.innerHTML = '';
+          els.gexOverlayContainer.innerHTML = '';
+        }
+      };
+
+      panel.watchFlow = function (expiration) {
+        if (!expiration) return;
+        panel.pendingWatchExpiration = expiration;
+        panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
+
+        panel.refreshCallPutWalls(expiration);
+        // Volume accumulates through the day - keep the walls current
+        // instead of freezing them at whatever they were on first load.
+        clearInterval(panel.wallRefreshTimer);
+        panel.wallRefreshTimer = setInterval(() => panel.refreshCallPutWalls(expiration), 60_000);
+
+        setTimeout(() => {
+          if (panel.pendingWatchExpiration === expiration && panel.active && panel.symbol) {
+            console.warn(`[flow:${panel.symbol}] No confirmation received for ${expiration} - retrying`);
+            panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration, spotPrice: panel.lastBarPrice });
+          }
+        }, 5000);
+      };
+
+      panel.loadExpirationsDropdown = async function () {
+        const select = els.expirationSelect;
+        select.disabled = true;
+        select.innerHTML = '<option value="">Loading...</option>';
+
+        try {
+          const dates = await fetchAllExpirations(panel.symbol);
+          select.innerHTML = dates.map((d) => `<option value="${d}">${formatExpirationLabel(d)}</option>`).join('');
+          select.disabled = false;
+          panel.watchFlow(select.value);
+        } catch (err) {
+          console.error(`[flow:${panel.symbol}] Failed to load expirations:`, err);
+          select.innerHTML = '<option value="">Failed to load</option>';
+        }
+      };
+
+      panel.loadInitialSeedData = async function (symbol) {
+        const previousSymbol = panel.symbol;
+        panel.symbol = symbol;
+
+        panel.sendWS({ type: 'unwatch_flow' });
+        panel.pendingWatchExpiration = null;
+
+        // Clear the previous ticker's wall lines/refresh timer - without
+        // this they'd keep showing (and updating) on the new symbol's
+        // chart, at price levels that belong to a completely different
+        // underlying.
+        clearInterval(panel.wallRefreshTimer);
+        if (panel.callWallLine) { candlestickSeries.removePriceLine(panel.callWallLine); panel.callWallLine = null; }
+        if (panel.putWallLine) { candlestickSeries.removePriceLine(panel.putWallLine); panel.putWallLine = null; }
+        if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+        if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
+        panel.callWallPrice = null;
+        panel.putWallPrice = null;
+        panel.highAreaPrice = null;
+        panel.lowAreaPrice = null;
+        els.callWallLabel.style.display = 'none';
+        els.putWallLabel.style.display = 'none';
+        els.highAreaLabel.style.display = 'none';
+        els.lowAreaLabel.style.display = 'none';
+        panel.strikeOverlayData = [];
+        els.strikeOverlayContainer.innerHTML = '';
+        panel.gexCallWallPrice = null;
+        panel.gexPutWallPrice = null;
+        els.gexCallWallLabel.style.display = 'none';
+        els.gexPutWallLabel.style.display = 'none';
+        panel.gexStrikeData = [];
+        els.gexOverlayContainer.innerHTML = '';
+
+        els.tickerSymbol.innerText = symbol;
+        els.tickerPrice.innerText = 'Loading...';
+        els.flowList.innerHTML = '';
+        panel.flowMarkers = [];
+        candlestickSeries.setMarkers([]);
+        panel.showChartError(null);
+        if (!panel.hasLoadedOnce) panel.setStatus('Fetching price data...');
+
+        let seedCandles;
+        try {
+          const result = await fetchHistoricalBars(symbol, panel.interval);
+          seedCandles = result.bars;
+          panel.previousClose = result.previousClose;
+          console.log(`[chart:${symbol}] Loaded ${seedCandles.length} real bars`, seedCandles[seedCandles.length - 1]);
+        } catch (err) {
+          console.error(`[chart:${symbol}] Historical bars failed to load:`, err);
+          panel.setStatus('Failed to load data', '#7a1f1f');
+          panel.showChartError(`Couldn't load price history: ${err.message}`);
+          els.tickerPrice.innerText = '--';
+          els.tickerChange.innerText = '';
+          candlestickSeries.setData([]);
+          volumeSeries.setData([]);
+          rsiSeries.setData([]);
+          panel.updateMacd([]);
+          panel.indicators.forEach((ind) => { ind.series.setData([]); ind.currentValue = null; });
+          panel.closeHistory = [];
+          panel.symbol = previousSymbol;
+          return;
+        }
+
+        try {
+          candlestickSeries.setData(seedCandles);
+          volumeSeries.setData(seedCandles.map((b) => ({
+            time: b.time,
+            value: b.volume || 0,
+            color: b.close >= b.open ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
+          })));
+          panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
+          rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
+          panel.updateMacd(seedCandles);
+          // Recompute whatever indicators the user has added, against
+          // this (possibly new) symbol's fresh data - the user's chosen
+          // set persists across ticker switches, just recalculated.
+          panel.recomputeAllIndicators();
+          panel.centerLastCandle();
+          console.log(`[chart:${symbol}] setData succeeded, bars on chart:`, seedCandles.length);
+        } catch (renderErr) {
+          console.error(`[chart:${symbol}] setData threw:`, renderErr);
+          panel.showChartError(`Chart failed to render candles: ${renderErr.message}`);
+          return;
+        }
+
+        const last = seedCandles[seedCandles.length - 1];
+        panel.lastBarTime = last.time;
+        panel.lastBarPrice = last.close;
+        panel.lastBarOpen = last.open;
+        panel.currentBarHigh = last.high;
+        panel.currentBarLow = last.low;
+        panel.currentBarVolume = last.volume || 0;
+
+        els.tickerPrice.innerText = `$${panel.lastBarPrice.toFixed(2)}`;
+        els.tickerPrice.style.color = last.close >= last.open ? '#00c853' : '#ff5252';
+        panel.updatePercentChange(panel.lastBarPrice);
+        panel.positionCandleTimer();
+        await panel.fetchSr15mBars(symbol);
+        panel.computeAndDrawSupportResistance();
+        panel.hasLoadedOnce = true;
+        saveChartSettings(panel);
+
+        panel.sendWS({ type: 'subscribe_price', symbol });
+
+        if (isFuturesTicker(symbol)) {
+          panel.setStatus('Live', '#1b5e20');
+          els.expirationSelect.disabled = true;
+          els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
+
+          // Big Flow needs an options chain, which doesn't exist for
+          // futures - without this, it silently errors in a loop (a
+          // watch_big_flow request that can never succeed) every time a
+          // futures ticker loads right after a stock (where Big Flow is
+          // always on).
+          if (panel.bigFlowEnabled) {
+            panel.bigFlowEnabled = false;
+            panel.sendWS({ type: 'unwatch_big_flow' });
+          }
+        } else {
+          // Big Flow is always on for stocks now (no toggle) - re-point it
+          // at the new ticker on every load. The server just overwrites
+          // the same tracked-contracts entry, no separate unwatch needed.
+          panel.bigFlowEnabled = true;
+          panel.sendWS({ type: 'watch_big_flow', symbol, spotPrice: panel.lastBarPrice });
+          panel.loadExpirationsDropdown();
+        }
+      };
+
+      // Known futures roots (mirrors futuresHub.js's CONTRACT_MULTIPLIERS
+      // keys) - typing just "NQ" resolves to whichever specific contract
+      // is currently the active front month (e.g. "NQU6"), instead of
+      // needing to know/type the exact expiration code.
+      const FUTURES_ROOTS = new Set(['ES', 'NQ', 'YM', 'RTY', 'GC', 'CL', 'MES', 'MNQ', 'MYM', 'M2K', 'MGC', 'MCL']);
+
+      async function resolveSymbolIfRoot(input) {
+        if (!FUTURES_ROOTS.has(input)) return input;
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/futures-resolve?root=${encodeURIComponent(input)}`);
+          const data = await res.json();
+          if (!res.ok || !data.ticker) throw new Error(data.error || 'Resolution failed');
+          console.log(`[futures] Resolved ${input} -> ${data.ticker}`);
+          return data.ticker;
+        } catch (err) {
+          console.error(`[futures] Failed to resolve root ${input}:`, err);
+          panel.showChartError(`Couldn't resolve the current ${input} contract: ${err.message}`);
+          return null;
+        }
+      }
+
+      els.searchBtn.addEventListener('click', async () => {
+        const rawSymbol = els.tickerInput.value.trim().toUpperCase();
+        if (!rawSymbol) return;
+        const symbol = await resolveSymbolIfRoot(rawSymbol);
+        if (symbol && symbol !== panel.symbol) panel.loadInitialSeedData(symbol);
+      });
+
+      els.replayBtn.addEventListener('click', async () => {
+        const symbol = panel.symbol;
+        const originalLabel = els.replayBtn.innerText;
+        els.replayBtn.disabled = true;
+        els.replayBtn.innerText = 'Loading...';
+
+        try {
+          const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+          // Start from a clean slate rather than appending - anything that
+          // streamed in live while this tab was open is ALSO in history
+          // now, so appending would duplicate it. Replay fully replaces
+          // the flow view with the saved, complete picture for today.
+          els.flowList.innerHTML = '';
+          panel.flowMarkers = [];
+          candlestickSeries.setMarkers([]);
+
+          for (const event of data.events || []) {
+            if (event.assetType === 'option') {
+              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, formatExpirationLabel(event.expiration), true);
+            } else {
+              // 'stock' and 'futures' share the same marker/card shape -
+              // size doubles as standardEquivalentSize for futures (see
+              // addStockFlowMarker: it's only actually used for the
+              // isFutures display branch, ignored otherwise).
+              panel.addStockFlowMarker(event.size, event.value, event.timeMs, event.side, event.sourceSymbol, event.size, true);
+            }
+          }
+
+          if (!data.events || data.events.length === 0) {
+            els.flowList.innerHTML = '<div style="padding: 8px; color: #8fa0be; font-size: 12px;">No saved flow for today yet</div>';
+          }
+        } catch (err) {
+          console.error(`[replay:${symbol}] failed:`, err);
+          els.flowList.innerHTML = '<div style="padding: 8px; color: #ff5252; font-size: 12px;">Failed to load flow history</div>';
+        } finally {
+          els.replayBtn.disabled = false;
+          els.replayBtn.innerText = originalLabel;
+        }
+      });
+
+      els.tickerInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') els.searchBtn.click();
+      });
+      els.timeframeSelect.addEventListener('change', (e) => {
+        panel.interval = e.target.value;
+        panel.intervalSeconds = INTERVAL_SECONDS[panel.interval] || 60;
+        // Full reload at the new timeframe - same symbol, but candles,
+        // MAs, volume, and live-tick bucketing all need to reset to match.
+        panel.loadInitialSeedData(panel.symbol);
+        saveChartSettings(panel);
+      });
+      els.expirationSelect.addEventListener('change', (e) => {
+        els.flowList.innerHTML = '';
+        panel.flowMarkers = [];
+        candlestickSeries.setMarkers([]);
+        panel.watchFlow(e.target.value);
+      });
+
+      panel.clampIndicatorPanelPosition = function () {
+        els.indicatorPanel.style.transform = 'translateX(-50%)';
+        const margin = 8;
+        const rect = els.indicatorPanel.getBoundingClientRect();
+        let shift = 0;
+        if (rect.left < margin) shift = margin - rect.left;
+        else if (rect.right > window.innerWidth - margin) shift = (window.innerWidth - margin) - rect.right;
+        if (shift !== 0) els.indicatorPanel.style.transform = `translateX(calc(-50% + ${shift}px))`;
+      };
+
+      els.indicatorToggleBtn.addEventListener('click', () => {
+        const opening = els.indicatorPanel.classList.contains('hidden');
+        els.indicatorPanel.classList.toggle('hidden');
+        els.indicatorToggleBtn.classList.toggle('active', opening);
+        // On a narrow (phone) screen the centered panel can extend past
+        // the left or right edge of the viewport and become unreachable -
+        // nudge it back on-screen with a horizontal offset if it does.
+        if (opening) panel.clampIndicatorPanelPosition();
+      });
+
+      els.srToggleCheckbox.addEventListener('change', () => {
+        panel.srEnabled = els.srToggleCheckbox.checked;
+        panel.computeAndDrawSupportResistance();
+        saveChartSettings(panel);
+      });
+
+      els.volumeProfileToggleCheckbox.addEventListener('change', () => {
+        panel.volumeProfileEnabled = els.volumeProfileToggleCheckbox.checked;
+        panel.positionStrikeOverlay();
+        saveChartSettings(panel);
+      });
+
+      els.gexToggleCheckbox.addEventListener('change', () => {
+        panel.gexEnabled = els.gexToggleCheckbox.checked;
+        panel.positionGexOverlay();
+        saveChartSettings(panel);
+      });
+
+      els.macdToggleCheckbox.addEventListener('change', () => {
+        panel.macdEnabled = els.macdToggleCheckbox.checked;
+        panel.updateMacd(panel.closeHistory);
+        saveChartSettings(panel);
+      });
+
+      els.indicatorAddBtn.addEventListener('click', () => {
+        const type = els.indicatorTypeSelect.value;
+        const period = parseInt(els.indicatorPeriodInput.value, 10);
+        if (!period || period < 1) return;
+
+        // "Step" is a different Lightweight Charts property (lineType)
+        // than the dash pattern options (lineStyle) - map the single
+        // dropdown choice to whichever combination it actually needs.
+        const STYLE_MAP = {
+          solid: { lineStyle: 0, lineType: 0 },
+          dashed: { lineStyle: 2, lineType: 0 },
+          dotted: { lineStyle: 1, lineType: 0 },
+          step: { lineStyle: 0, lineType: 1 },
+        };
+        const { lineStyle, lineType } = STYLE_MAP[els.indicatorStyleSelect.value] || STYLE_MAP.solid;
+
+        panel.addIndicator(type, period, lineStyle, lineType);
+      });
+
+      // Remove buttons are created dynamically inside the list's
+      // innerHTML, so a single delegated listener on the list container
+      // catches clicks on any of them, present or future.
+      els.indicatorList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.indicator-remove-btn');
+        if (btn) panel.removeIndicator(btn.dataset.id);
+      });
+
+      window.addEventListener('resize', () => {
+        panel.centerLastCandle();
+        panel.positionWallLabels();
+        panel.positionStrikeOverlay();
+        panel.positionGexOverlay();
+        panel.positionCandleTimer();
+        panel.positionSRLabels();
+        if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
+      });
+
+      // Keeps the candle countdown ticking even during quiet stretches
+      // with no live trades - everything else here is only repositioned
+      // in response to a price tick, resize, or pan/zoom, but the
+      // countdown needs to advance once a second regardless.
+      setInterval(() => panel.positionCandleTimer(), 1000);
+
+      // Panning/zooming the chart shifts the auto-scaled price range (and
+      // therefore the price->pixel mapping) just as much as a live tick
+      // does - without this, the labels only caught up on the next tick
+      // or 60s refresh, visibly lagging behind the actual line while
+      // the user was actively scrolling/zooming.
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); });
+
+      return panel;
+    }
+
+    function initApp() {
+    const panels = [
+      createPanel(0, 'SPY'),
+      createPanel(1, 'QQQ'),
+    ];
+
+    panels.forEach(async (p) => {
+      await p.loadInitialSeedData(p.symbol);
+      for (const ind of p.pendingIndicatorRestore) {
+        p.addIndicator(ind.type, ind.period, ind.lineStyle, ind.lineType);
+      }
+    });
+
+    document.getElementById('layout-select').addEventListener('change', (e) => {
+      const mode = e.target.value;
+      const secondPanelRoot = document.querySelector('[data-panel-index="1"]');
+
+      if (mode === '1') {
+        secondPanelRoot.classList.add('hidden');
+        panels[1].pause();
+      } else {
+        secondPanelRoot.classList.remove('hidden');
+        panels[1].resume();
+      }
+
+      requestAnimationFrame(() => {
+        panels[0].centerLastCandle();
+        if (mode === '2') panels[1].centerLastCandle();
+      });
+    });
+
+    document.getElementById('marker-floor-select').addEventListener('change', (e) => {
+      CHART_MARKER_PREMIUM_FLOOR = parseInt(e.target.value, 10);
+    });
+
+    document.getElementById('futures-marker-floor-select').addEventListener('change', (e) => {
+      FUTURES_CHART_MARKER_FLOOR = parseInt(e.target.value, 10);
+    });
+
+    function formatPremiumTotal(n) {
+      if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+      return `$${(n / 1000).toFixed(0)}k`;
+    }
+
+    function leaderboardItemHtml(entry, rank) {
+      const putHeavy = entry.put > entry.call;
+      const pct = entry.percentChange;
+      // Always rendered (even empty) - its flex:1 is what keeps Call/Put
+      // right-aligned consistently, whether or not this symbol has a
+      // percent change value available.
+      const pctText = pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '';
+      const pctColor = pct != null ? (pct >= 0 ? '#00c853' : '#ff5252') : 'transparent';
+      return `<div class="leaderboard-item" data-symbol="${entry.symbol}">` +
+        `<span class="leaderboard-rank">${rank}</span>` +
+        `<span class="leaderboard-symbol ${putHeavy ? 'put-heavy' : 'call-heavy'}">${entry.symbol}</span>` +
+        `<span class="leaderboard-pct" style="color: ${pctColor};">${pctText}</span>` +
+        `<span class="leaderboard-call">${formatPremiumTotal(entry.call)}</span>` +
+        `<span class="leaderboard-put">${formatPremiumTotal(entry.put)}</span>` +
+        `</div>`;
+    }
+
+    async function loadLeaderboard() {
+      const listEl = document.getElementById('leaderboard-list');
+      listEl.innerText = 'Loading...';
+
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/api/premium-leaderboard`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
+
+        if (!data.ready) {
+          listEl.innerText = 'Still setting up - try again in a moment';
+          return;
+        }
+
+        const rankings = data.rankings || [];
+        listEl.innerHTML = rankings.length
+          ? rankings.slice(0, 15).map((entry, i) => leaderboardItemHtml(entry, i + 1)).join('')
+          : 'No premium tracked yet today';
+      } catch (err) {
+        console.error('[leaderboard] failed to load:', err);
+        listEl.innerText = 'Failed to load';
+      }
+    }
+
+    let leaderboardPollInterval = null;
+
+    function stopLeaderboardPolling() {
+      clearInterval(leaderboardPollInterval);
+      leaderboardPollInterval = null;
+    }
+
+    document.getElementById('leaderboard-btn').addEventListener('click', () => {
+      const panel = document.getElementById('leaderboard-panel');
+      const opening = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden');
+      if (opening) {
+        loadLeaderboard();
+        // Refresh every 30s while the panel stays open - underlying
+        // premium totals update live on the backend as trades stream in,
+        // this just keeps what's on screen from going stale without
+        // requiring a manual close/reopen. Stopped the moment the panel
+        // closes, so it's never polling in the background for no reason.
+        stopLeaderboardPolling();
+        leaderboardPollInterval = setInterval(loadLeaderboard, 30_000);
+      } else {
+        stopLeaderboardPolling();
+      }
+    });
+
+    document.getElementById('leaderboard-panel').addEventListener('click', (e) => {
+      const item = e.target.closest('.leaderboard-item');
+      if (!item || !item.dataset.symbol) return;
+      const symbol = item.dataset.symbol;
+      panels[0].els.tickerInput.value = symbol;
+      panels[0].loadInitialSeedData(symbol);
+      document.getElementById('leaderboard-panel').classList.add('hidden');
+      stopLeaderboardPolling();
+    });
+
+    } // end initApp
+
+    initApp();
+  </script>
+</body>
+</html>
