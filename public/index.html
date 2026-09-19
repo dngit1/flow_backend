@@ -2287,12 +2287,6 @@
           const gexCallWall = topStrike(callGexByStrike);
           const gexPutWall = topStrike(putGexByStrike);
           const gexFlip = computeGammaFlip(callGexByStrike, putGexByStrike);
-          // TEMP DIAGNOSTIC: distinguishes "flip computed but off-screen
-          // at the current zoom" from "net GEX never crosses zero across
-          // the observed strikes" - remove once confirmed which one this
-          // is in practice.
-          const allGexStrikes = [...new Set([...callGexByStrike.keys(), ...putGexByStrike.keys()])].sort((a, b) => a - b);
-          console.log(`[gex:${panel.symbol}] flip=${gexFlip} strikeRange=${allGexStrikes[0]}-${allGexStrikes[allGexStrikes.length - 1]} (${allGexStrikes.length} strikes) currentPrice=${panel.lastBarPrice}`);
 
           const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
