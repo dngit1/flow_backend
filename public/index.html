@@ -635,6 +635,10 @@
       right: 250px;
     }
 
+    .gex-overlay-row .strike-overlay-bar-track {
+      width: 90px; /* narrower than the volume lane's 150px - keeps both lanes fitting comfortably together on narrower panels */
+    }
+
     .gex-overlay-row .strike-overlay-bar-call { background-color: #ffa726; }
     .gex-overlay-row .strike-overlay-bar-put { background-color: #29b6f6; }
 
@@ -2655,6 +2659,23 @@
 
       els.gexToggleCheckbox.addEventListener('change', () => {
         panel.gexEnabled = els.gexToggleCheckbox.checked;
+        if (!panel.gexEnabled) {
+          // The bar overlay already self-clears inside positionGexOverlay
+          // when disabled, but the wall price LINES don't - they're only
+          // ever drawn/removed inside refreshCallPutWalls, so turning the
+          // toggle off has to explicitly tear them down here too.
+          if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
+          if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
+          panel.gexCallWallPrice = null;
+          panel.gexPutWallPrice = null;
+          els.gexCallWallLabel.style.display = 'none';
+          els.gexPutWallLabel.style.display = 'none';
+          panel.gexStrikeData = [];
+        } else if (els.expirationSelect.value) {
+          // Re-fetch and redraw fresh rather than trying to resurrect
+          // stale data - simplest way to get the lines back correctly.
+          panel.refreshCallPutWalls(els.expirationSelect.value);
+        }
         panel.positionGexOverlay();
         saveChartSettings(panel);
       });
