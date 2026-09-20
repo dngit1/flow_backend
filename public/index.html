@@ -657,6 +657,16 @@
       color: #e0e0e0;
     }
 
+    .wall-label.gex-magnet-label {
+      background-color: transparent;
+      color: #fdd835;
+    }
+
+    .wall-label.gex-magnet-alt-label {
+      background-color: transparent;
+      color: #ec407a;
+    }
+
     /* End-of-line MA labels - positioned at the line's current value and
        the latest bar's x-position, instead of Lightweight Charts' native
        label (which only renders in the fixed price-axis column). */
@@ -696,6 +706,17 @@
 
     .sr-label.support-label {
       color: #00c853;
+    }
+
+    .net-flow-label {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      z-index: 13;
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      pointer-events: none;
     }
 
     .candle-timer {
@@ -839,7 +860,10 @@
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
         <div class="wall-label gex-flip-label" style="display:none;"></div>
+        <div class="wall-label gex-magnet-label" style="display:none;"></div>
+        <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
+        <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Flow</div>
@@ -924,7 +948,10 @@
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
         <div class="wall-label gex-flip-label" style="display:none;"></div>
+        <div class="wall-label gex-magnet-label" style="display:none;"></div>
+        <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
+        <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
         <div class="flow-title">Live Flow</div>
@@ -1004,6 +1031,38 @@
         prevStrike = strike;
       }
       return null; // net GEX never actually crosses zero across the observed strikes
+    }
+
+    // Max Pain ("Magnet Alternate"): the strike where TOTAL payout to
+    // option HOLDERS - intrinsic value x open interest, summed across
+    // every call and put on the (single, nearest) expiration - would be
+    // SMALLEST if the stock settled exactly there. Equivalently: where
+    // option SELLERS collectively lose the least. A commonly-cited
+    // "pinning" candidate in retail trading content, kept here as a
+    // distinct, separately-labeled alternative to compare against the
+    // gamma-based Magnet - worth knowing the actual research on whether
+    // Max Pain predicts real pinning is considerably weaker/more mixed
+    // than the gamma-hedging mechanism the rest of GEX is built on.
+    function computeMaxPain(callOIByStrike, putOIByStrike) {
+      const allStrikes = [...new Set([...callOIByStrike.keys(), ...putOIByStrike.keys()])].sort((a, b) => a - b);
+      if (allStrikes.length === 0) return null;
+
+      let bestStrike = null;
+      let bestPayout = Infinity;
+      for (const settleAt of allStrikes) {
+        let payout = 0;
+        for (const [strike, oi] of callOIByStrike) {
+          if (settleAt > strike) payout += (settleAt - strike) * oi;
+        }
+        for (const [strike, oi] of putOIByStrike) {
+          if (settleAt < strike) payout += (strike - settleAt) * oi;
+        }
+        if (payout < bestPayout) {
+          bestPayout = payout;
+          bestStrike = settleAt;
+        }
+      }
+      return bestStrike;
     }
 
     // Remembers each panel's ticker, timeframe, and indicators across
@@ -1236,6 +1295,7 @@
         flowList: root.querySelector('.flow-list'),
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         srLabelContainer: root.querySelector('.sr-label-container'),
+        netFlowContainer: root.querySelector('.net-flow-container'),
         candleTimer: root.querySelector('.candle-timer'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
         indicatorPanel: root.querySelector('.indicator-panel'),
@@ -1251,6 +1311,8 @@
         gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
         gexPutWallLabel: root.querySelector('.gex-put-wall-label'),
         gexFlipLabel: root.querySelector('.gex-flip-label'),
+        gexMagnetLabel: root.querySelector('.gex-magnet-label'),
+        gexMagnetAltLabel: root.querySelector('.gex-magnet-alt-label'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -1375,6 +1437,7 @@
         interval: initialInterval, // sent to the backend - matches the Timeframe dropdown's value
         intervalSeconds: INTERVAL_SECONDS[initialInterval] || 60, // used to bucket live ticks into the right candle width
         flowMarkers: [],
+        netFlowByBarTime: new Map(), // futures only - barTime -> signed net contract count (BUY positive, SELL negative) for trades clearing FUTURES_CHART_MARKER_FLOOR
         lastBarTime: null,
         lastBarPrice: 0,
         currentBarVolume: 0,
@@ -1563,6 +1626,7 @@
         if (!panel.lastBarTime) return;
 
         const isCall = type === 'CALL';
+        const isSold = side === 'SOLD';
         const formattedPrem = `$${(premiumVal / 1000).toFixed(0)}k`;
         const sideLabel = side || 'BOUGHT';
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
@@ -1571,11 +1635,22 @@
 
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
+        // SOLD markers intentionally swap position/shape relative to
+        // BOUGHT (a sold put sits below the candle pointing up, a sold
+        // call sits above pointing down - opposite of where that same
+        // option type would sit if bought) and use one shared cyan color
+        // for both, rather than the normal call=green/put=red split -
+        // makes "this was a SOLD print" visually distinct at a glance
+        // instead of only readable from the marker's text label.
+        const position = isSold ? (isCall ? 'aboveBar' : 'belowBar') : (isCall ? 'belowBar' : 'aboveBar');
+        const shape = isSold ? (isCall ? 'arrowDown' : 'arrowUp') : (isCall ? 'arrowUp' : 'arrowDown');
+        const color = isSold ? '#00e5ff' : (isCall ? '#00c853' : '#ff5252');
+
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
-          position: isCall ? 'belowBar' : 'aboveBar',
-          color: isCall ? '#00c853' : '#ff5252',
-          shape: isCall ? 'arrowUp' : 'arrowDown',
+          position,
+          color,
+          shape,
           text: `${expirationLabel ? `[${expirationLabel}] ` : ''}${sideLabel === 'SOLD' ? 'S' : 'B'} ${type} $${strike} (${formattedPrem})`,
           size: MARKER_SIZE,
           isCall,
@@ -1643,6 +1718,19 @@
         // one busy panel.
         if (isFutures && dollarValue < FUTURES_CHART_MARKER_FLOOR) return;
 
+        // Net flow per candle (futures only) - same qualifying trades as
+        // the chart markers above (same floor), just summed with sign
+        // (BUY positive, SELL negative) into one running total per
+        // candle instead of shown as individual arrows. Uses the same
+        // resolveMarkerTime bucketing so it always lines up with
+        // whichever candle the marker itself would land on.
+        if (isFutures) {
+          const barTime = panel.resolveMarkerTime(timestamp);
+          const contribution = isBuy ? contractCount : -contractCount;
+          panel.netFlowByBarTime.set(barTime, (panel.netFlowByBarTime.get(barTime) || 0) + contribution);
+          panel.positionNetFlowLabels();
+        }
+
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
           position: isBuy ? 'belowBar' : 'aboveBar',
@@ -1656,6 +1744,39 @@
         if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
         candlestickSeries.setMarkers(panel.flowMarkers);
+      };
+
+      // Renders one label per candle that has qualifying futures flow,
+      // positioned just above that candle's own high - green for net
+      // buying, red for net selling. Rebuilds the whole container each
+      // call rather than diffing individual labels (simplest correct
+      // approach; net flow only changes at most once per qualifying
+      // trade, not on every tick, so this isn't a hot path).
+      panel.positionNetFlowLabels = function () {
+        if (!isFuturesTicker(panel.symbol) || panel.netFlowByBarTime.size === 0) {
+          els.netFlowContainer.innerHTML = '';
+          return;
+        }
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+        const bars = candlestickSeries.data();
+        const barByTime = new Map(bars.map((b) => [b.time, b]));
+
+        const html = [];
+        for (const [barTime, net] of panel.netFlowByBarTime) {
+          const bar = barByTime.get(barTime);
+          if (!bar) continue; // candle has since scrolled out of the loaded data - nothing to anchor the label to
+          const x = chart.timeScale().timeToCoordinate(barTime);
+          const y = candlestickSeries.priceToCoordinate(bar.high);
+          if (x == null || y == null || x < 0 || x > width || y < 0 || y > height) continue;
+
+          const isWholeNumber = Math.abs(net - Math.round(net)) < 0.05;
+          const formattedNet = isWholeNumber ? Math.round(net) : net.toFixed(1);
+          const sign = net > 0 ? '+' : ''; // Math.round/toFixed already include the minus sign for negatives
+          const color = net >= 0 ? '#00c853' : '#ff5252';
+          html.push(`<div class="net-flow-label" style="left:${x}px; top:${y - 6}px; color:${color};">${sign}${formattedNet}</div>`);
+        }
+        els.netFlowContainer.innerHTML = html.join('');
       };
 
       // Fetches the fixed 15m bar history S/R runs on (independent of
@@ -1826,6 +1947,7 @@
         panel.positionGexOverlay();
         panel.positionCandleTimer();
         panel.positionSRLabels();
+        panel.positionNetFlowLabels();
       };
 
       panel.wallRefreshTimer = null;
@@ -1836,6 +1958,10 @@
       panel.gexPutWallPrice = null;
       panel.gexFlipLine = null;
       panel.gexFlipPrice = null;
+      panel.gexMagnetLine = null;
+      panel.gexMagnetPrice = null;
+      panel.gexMagnetAltLine = null;
+      panel.gexMagnetAltPrice = null;
       panel.gexStrikeData = []; // [{strike, c, p, isWallRow}] - gamma x OI per strike, rendered by positionGexOverlay
 
       let indicatorIdCounter = 0;
@@ -1988,6 +2114,8 @@
         positionOne(panel.gexCallWallPrice, els.gexCallWallLabel);
         positionOne(panel.gexPutWallPrice, els.gexPutWallLabel);
         positionOne(panel.gexFlipPrice, els.gexFlipLabel);
+        positionOne(panel.gexMagnetPrice, els.gexMagnetLabel);
+        positionOne(panel.gexMagnetAltPrice, els.gexMagnetAltLabel);
 
         // Both walls on the same strike would otherwise stack their
         // labels directly on top of each other - flip Put Wall below
@@ -2185,6 +2313,7 @@
       panel.fetchGexData = async function () {
         const callGexByStrike = new Map();
         const putGexByStrike = new Map();
+        let nearestExpirationOptions = []; // for Magnet/Max Pain below - those need the SINGLE nearest expiration in isolation, not blended across all 6 like the walls
         try {
           const allExpirations = await fetchAllExpirations(panel.symbol);
           const targetExpirations = allExpirations.slice(0, GEX_EXPIRATION_COUNT);
@@ -2193,7 +2322,8 @@
               .then((r) => r.json())
               .catch((err) => { console.error(`[gex:${panel.symbol}] chain fetch failed for ${exp}:`, err); return { options: [] }; })
           ));
-          for (const chainData of results) {
+          results.forEach((chainData, i) => {
+            if (i === 0) nearestExpirationOptions = chainData.options || [];
             for (const o of chainData.options || []) {
               const gamma = o.greeks?.gamma;
               const oi = o.open_interest;
@@ -2202,11 +2332,11 @@
               const map = o.option_type === 'call' ? callGexByStrike : putGexByStrike;
               map.set(o.strike, (map.get(o.strike) || 0) + gexValue);
             }
-          }
+          });
         } catch (err) {
           console.error(`[gex:${panel.symbol}] failed to fetch multi-expiration GEX data:`, err);
         }
-        return { callGexByStrike, putGexByStrike };
+        return { callGexByStrike, putGexByStrike, nearestExpirationOptions };
       };
 
       panel.refreshCallPutWalls = async function (expiration) {
@@ -2219,7 +2349,7 @@
           ]);
           const data = await volumeRes.json();
           if (!volumeRes.ok) throw new Error(data.error || `Request failed: ${volumeRes.status}`);
-          const { callGexByStrike, putGexByStrike } = gexData;
+          const { callGexByStrike, putGexByStrike, nearestExpirationOptions } = gexData;
 
           const callVolumeByStrike = new Map();
           const putVolumeByStrike = new Map();
@@ -2244,6 +2374,29 @@
           const gexCallWall = topStrike(callGexByStrike);
           const gexPutWall = topStrike(putGexByStrike);
           const gexFlip = computeGammaFlip(callGexByStrike, putGexByStrike);
+
+          // Magnet / Magnet Alt: unlike the walls and Flip above (blended
+          // across GEX_EXPIRATION_COUNT expirations), these are computed
+          // from the SINGLE nearest expiration in isolation - pinning is
+          // fundamentally about gamma/OI concentrated in the contract
+          // expiring soonest, and blending in far-dated expirations would
+          // dilute exactly the concentration that causes it.
+          const magnetCombinedByStrike = new Map(); // gamma x OI, calls + puts combined (not signed/separated like the walls)
+          const magnetCallOIByStrike = new Map();
+          const magnetPutOIByStrike = new Map();
+          for (const o of nearestExpirationOptions) {
+            const gamma = o.greeks?.gamma;
+            const oi = o.open_interest;
+            if (gamma != null && oi > 0) {
+              magnetCombinedByStrike.set(o.strike, (magnetCombinedByStrike.get(o.strike) || 0) + gamma * oi * 100);
+            }
+            if (oi > 0) {
+              const oiMap = o.option_type === 'call' ? magnetCallOIByStrike : magnetPutOIByStrike;
+              oiMap.set(o.strike, (oiMap.get(o.strike) || 0) + oi);
+            }
+          }
+          const gexMagnet = topStrike(magnetCombinedByStrike);
+          const gexMagnetAlt = computeMaxPain(magnetCallOIByStrike, magnetPutOIByStrike);
 
           const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
@@ -2296,6 +2449,8 @@
           if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
+          if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
+          if (panel.gexMagnetAltLine) { candlestickSeries.removePriceLine(panel.gexMagnetAltLine); panel.gexMagnetAltLine = null; }
 
           // callWall/putWall/highArea/lowArea themselves are still
           // computed above and used below (isWallRow highlighting + the
@@ -2305,6 +2460,8 @@
           panel.gexCallWallPrice = gexCallWall;
           panel.gexPutWallPrice = gexPutWall;
           panel.gexFlipPrice = gexFlip;
+          panel.gexMagnetPrice = gexMagnet;
+          panel.gexMagnetAltPrice = gexMagnetAlt;
 
           if (gexCallWall != null) {
             panel.gexCallWallLine = candlestickSeries.createPriceLine({
@@ -2336,6 +2493,26 @@
             });
             els.gexFlipLabel.innerText = `Gamma Flip ${gexFlip}`;
           }
+          if (gexMagnet != null) {
+            panel.gexMagnetLine = candlestickSeries.createPriceLine({
+              price: gexMagnet,
+              color: '#fdd835',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+            });
+            els.gexMagnetLabel.innerText = `Magnet ${gexMagnet}`;
+          }
+          if (gexMagnetAlt != null) {
+            panel.gexMagnetAltLine = candlestickSeries.createPriceLine({
+              price: gexMagnetAlt,
+              color: '#ec407a',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+            });
+            els.gexMagnetAltLabel.innerText = `Magnet Alt ${gexMagnetAlt}`;
+          }
           panel.positionWallLabels();
 
           // Strike range for the overlay - Low Area to High Area, the
@@ -2361,6 +2538,7 @@
           panel.positionGexOverlay();
           panel.positionCandleTimer();
           panel.positionSRLabels();
+          panel.positionNetFlowLabels();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
           panel.strikeOverlayData = [];
@@ -2425,8 +2603,14 @@
         els.gexPutWallLabel.style.display = 'none';
         panel.gexFlipPrice = null;
         els.gexFlipLabel.style.display = 'none';
+        panel.gexMagnetPrice = null;
+        panel.gexMagnetAltPrice = null;
+        els.gexMagnetLabel.style.display = 'none';
+        els.gexMagnetAltLabel.style.display = 'none';
         panel.gexStrikeData = [];
         els.gexOverlayContainer.innerHTML = '';
+        panel.netFlowByBarTime = new Map();
+        els.netFlowContainer.innerHTML = '';
 
         els.tickerSymbol.innerText = symbol;
         els.tickerPrice.innerText = 'Loading...';
@@ -2494,6 +2678,7 @@
         panel.positionCandleTimer();
         await panel.fetchSr15mBars(symbol);
         panel.computeAndDrawSupportResistance();
+        panel.positionNetFlowLabels();
         panel.hasLoadedOnce = true;
         saveChartSettings(panel);
 
@@ -2654,12 +2839,18 @@
           if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
+          if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
+          if (panel.gexMagnetAltLine) { candlestickSeries.removePriceLine(panel.gexMagnetAltLine); panel.gexMagnetAltLine = null; }
           panel.gexCallWallPrice = null;
           panel.gexPutWallPrice = null;
           panel.gexFlipPrice = null;
+          panel.gexMagnetPrice = null;
+          panel.gexMagnetAltPrice = null;
           els.gexCallWallLabel.style.display = 'none';
           els.gexPutWallLabel.style.display = 'none';
           els.gexFlipLabel.style.display = 'none';
+          els.gexMagnetLabel.style.display = 'none';
+          els.gexMagnetAltLabel.style.display = 'none';
           panel.gexStrikeData = [];
         } else if (els.expirationSelect.value) {
           // Re-fetch and redraw fresh rather than trying to resurrect
@@ -2710,6 +2901,7 @@
         panel.positionGexOverlay();
         panel.positionCandleTimer();
         panel.positionSRLabels();
+        panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
       });
 
@@ -2724,7 +2916,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
