@@ -657,12 +657,23 @@
       color: #e0e0e0;
     }
 
+    .wall-label.high-area-label,
+    .wall-label.low-area-label {
+      left: 5%; /* own lane, left of Magnet (12%), S/R (25%), and GEX Call/Put Wall/Flip (center) */
+      background-color: transparent;
+      color: #42a5f5;
+    }
+
     .wall-label.gex-magnet-label {
+      left: 12%; /* own lane - the High/Low Area lane, unused since those labels were removed - keeps Magnet clear of GEX Call/Put Wall/Flip (center) and S/R (25%) */
+      transform: translate(-50%, calc(-100% - 3px)); /* slight extra lift above the line, so this and Magnet 2 never fully overlap even if both land on the same price */
       background-color: transparent;
       color: #fdd835;
     }
 
     .wall-label.gex-magnet-alt-label {
+      left: 12%;
+      transform: translate(-50%, calc(-100% + 3px)); /* sits a touch lower than Magnet 1 for the same reason */
       background-color: transparent;
       color: #ec407a;
     }
@@ -860,6 +871,8 @@
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
         <div class="wall-label gex-flip-label" style="display:none;"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
@@ -948,6 +961,8 @@
         <div class="wall-label gex-call-wall-label" style="display:none;"></div>
         <div class="wall-label gex-put-wall-label" style="display:none;"></div>
         <div class="wall-label gex-flip-label" style="display:none;"></div>
+        <div class="wall-label high-area-label" style="display:none;"></div>
+        <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
@@ -1311,6 +1326,8 @@
         gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
         gexPutWallLabel: root.querySelector('.gex-put-wall-label'),
         gexFlipLabel: root.querySelector('.gex-flip-label'),
+        highAreaLabel: root.querySelector('.high-area-label'),
+        lowAreaLabel: root.querySelector('.low-area-label'),
         gexMagnetLabel: root.querySelector('.gex-magnet-label'),
         gexMagnetAltLabel: root.querySelector('.gex-magnet-alt-label'),
         indicatorList: root.querySelector('.indicator-list'),
@@ -1958,6 +1975,10 @@
       panel.gexPutWallPrice = null;
       panel.gexFlipLine = null;
       panel.gexFlipPrice = null;
+      panel.highAreaLine = null;
+      panel.lowAreaLine = null;
+      panel.highAreaPrice = null;
+      panel.lowAreaPrice = null;
       panel.gexMagnetLine = null;
       panel.gexMagnetPrice = null;
       panel.gexMagnetAltLine = null;
@@ -2116,6 +2137,8 @@
         positionOne(panel.gexFlipPrice, els.gexFlipLabel);
         positionOne(panel.gexMagnetPrice, els.gexMagnetLabel);
         positionOne(panel.gexMagnetAltPrice, els.gexMagnetAltLabel);
+        positionOne(panel.highAreaPrice, els.highAreaLabel);
+        positionOne(panel.lowAreaPrice, els.lowAreaLabel);
 
         // Both walls on the same strike would otherwise stack their
         // labels directly on top of each other - flip Put Wall below
@@ -2451,17 +2474,20 @@
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
           if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
           if (panel.gexMagnetAltLine) { candlestickSeries.removePriceLine(panel.gexMagnetAltLine); panel.gexMagnetAltLine = null; }
+          if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+          if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
 
-          // callWall/putWall/highArea/lowArea themselves are still
-          // computed above and used below (isWallRow highlighting + the
-          // strike range for the volume profile overlay) - only the
-          // chart LINES/labels for them were removed, the volume
-          // profile itself is otherwise unchanged.
+          // callWall/putWall themselves are still computed above and used
+          // below (isWallRow highlighting + the strike range for the
+          // volume profile overlay) - only THEIR chart lines/labels stay
+          // removed; High/Low Area are back to being drawn again below.
           panel.gexCallWallPrice = gexCallWall;
           panel.gexPutWallPrice = gexPutWall;
           panel.gexFlipPrice = gexFlip;
           panel.gexMagnetPrice = gexMagnet;
           panel.gexMagnetAltPrice = gexMagnetAlt;
+          panel.highAreaPrice = highArea;
+          panel.lowAreaPrice = lowArea;
 
           if (gexCallWall != null) {
             panel.gexCallWallLine = candlestickSeries.createPriceLine({
@@ -2501,7 +2527,7 @@
               lineStyle: LightweightCharts.LineStyle.Dotted,
               axisLabelVisible: true,
             });
-            els.gexMagnetLabel.innerText = `Magnet ${gexMagnet}`;
+            els.gexMagnetLabel.innerText = `Magnet 1: ${gexMagnet}`;
           }
           if (gexMagnetAlt != null) {
             panel.gexMagnetAltLine = candlestickSeries.createPriceLine({
@@ -2511,7 +2537,27 @@
               lineStyle: LightweightCharts.LineStyle.Dotted,
               axisLabelVisible: true,
             });
-            els.gexMagnetAltLabel.innerText = `Magnet Alt ${gexMagnetAlt}`;
+            els.gexMagnetAltLabel.innerText = `Magnet 2: ${gexMagnetAlt}`;
+          }
+          if (highArea != null) {
+            panel.highAreaLine = candlestickSeries.createPriceLine({
+              price: highArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.highAreaLabel.innerText = `High Area: ${highArea}`;
+          }
+          if (lowArea != null) {
+            panel.lowAreaLine = candlestickSeries.createPriceLine({
+              price: lowArea,
+              color: '#42a5f5',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+            });
+            els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
           }
           panel.positionWallLabels();
 
@@ -2607,6 +2653,10 @@
         panel.gexMagnetAltPrice = null;
         els.gexMagnetLabel.style.display = 'none';
         els.gexMagnetAltLabel.style.display = 'none';
+        panel.highAreaPrice = null;
+        panel.lowAreaPrice = null;
+        els.highAreaLabel.style.display = 'none';
+        els.lowAreaLabel.style.display = 'none';
         panel.gexStrikeData = [];
         els.gexOverlayContainer.innerHTML = '';
         panel.netFlowByBarTime = new Map();
