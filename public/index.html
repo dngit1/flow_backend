@@ -652,6 +652,15 @@
       color: #29b6f6;
     }
 
+    /* Applied when current price sits below the Gamma Flip line - see
+       panel.applyGexWallRegimeStyle. Dims the label to visually match the
+       line itself going thinner/dotted, so a wall reads as structurally
+       less reliable in the current regime without needing separate text. */
+    .wall-label.gex-call-wall-label.weak,
+    .wall-label.gex-put-wall-label.weak {
+      opacity: 0.45;
+    }
+
     .wall-label.gex-flip-label {
       background-color: transparent;
       color: #e0e0e0;
@@ -1960,6 +1969,7 @@
         panel.updatePercentChange(tradePrice);
         panel.lastBarPrice = tradePrice;
         panel.positionWallLabels();
+        panel.applyGexWallRegimeStyle();
         panel.positionStrikeOverlay();
         panel.positionGexOverlay();
         panel.positionCandleTimer();
@@ -2145,6 +2155,40 @@
         // the line so they stay readable side by side.
         const gexSameStrike = panel.gexCallWallPrice != null && panel.gexPutWallPrice != null && panel.gexCallWallPrice === panel.gexPutWallPrice;
         els.gexPutWallLabel.classList.toggle('below-line', gexSameStrike);
+      };
+
+      // Restyles the Call/Put Wall lines "strong" (full opacity, normal
+      // width, dashed) or "weak" (dimmed, thinner, dotted) based on
+      // whether CURRENT PRICE sits above or below the Gamma Flip line -
+      // the same regime the Flip line represents (dealer hedging dampens
+      // moves above Flip, amplifies them below), just given a visual
+      // expression on the walls themselves. This is a judgment call built
+      // on the standard GEX theory, not something independently validated
+      // with real track record in this app - "weak" means "less likely to
+      // hold per the theory," not a guarantee either way. Uses
+      // applyOptions() rather than removing/recreating the lines, so this
+      // can run on every price tick cheaply, not just on the 60s refresh -
+      // the regime can flip mid-session as price crosses Flip.
+      panel.applyGexWallRegimeStyle = function () {
+        if (!panel.gexCallWallLine && !panel.gexPutWallLine) return;
+        const isStrong = panel.gexFlipPrice == null || panel.lastBarPrice == null || panel.lastBarPrice > panel.gexFlipPrice;
+
+        if (panel.gexCallWallLine) {
+          panel.gexCallWallLine.applyOptions({
+            color: isStrong ? '#ffa726' : 'rgba(255, 167, 38, 0.35)',
+            lineWidth: isStrong ? 2 : 1,
+            lineStyle: isStrong ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted,
+          });
+        }
+        if (panel.gexPutWallLine) {
+          panel.gexPutWallLine.applyOptions({
+            color: isStrong ? '#29b6f6' : 'rgba(41, 182, 246, 0.35)',
+            lineWidth: isStrong ? 2 : 1,
+            lineStyle: isStrong ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Dotted,
+          });
+        }
+        els.gexCallWallLabel.classList.toggle('weak', !isStrong);
+        els.gexPutWallLabel.classList.toggle('weak', !isStrong);
       };
 
       // Recomputes and sets MACD data from the given bars, or clears all
@@ -2560,6 +2604,7 @@
             els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
           }
           panel.positionWallLabels();
+          panel.applyGexWallRegimeStyle();
 
           // Strike range for the overlay - Low Area to High Area, the
           // same range the two blue lines mark (now the ATM±7 window).
