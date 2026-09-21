@@ -75,6 +75,28 @@
       display: none;
     }
 
+    #background-flow-panel {
+      min-width: 320px;
+      max-width: 380px;
+    }
+
+    #background-flow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    #background-flow-list .flow-card {
+      font-size: 10px; /* smaller than the sidebar's flow-card - this list carries a ticker per entry too, more to fit */
+    }
+
+    .background-flow-ticker {
+      font-weight: 700;
+      color: #8fa0be;
+      margin-right: 4px;
+    }
+
     .leaderboard-panel h4 {
       margin: 0 0 6px 0;
       font-size: 11px;
@@ -807,6 +829,12 @@
       </div>
       <div id="leaderboard-list">Loading...</div>
     </div>
+
+    <button id="background-flow-btn" class="leaderboard-btn">Background Flow</button>
+    <div id="background-flow-panel" class="leaderboard-panel hidden">
+      <h4>Background Flow - SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, NFLX, AVGO, COIN, PLTR</h4>
+      <div id="background-flow-list"></div>
+    </div>
   </div>
 
   <div class="panels-row">
@@ -1531,6 +1559,13 @@
             console.log(`[bigflow:${panel.symbol}] watching ${msg.contractCount} contracts across multiple expirations`);
           } else if (msg.type === 'stock_flow' && msg.symbol === panel.symbol) {
             panel.addStockFlowMarker(msg.size, msg.dollarValue, msg.timeMs, msg.side, msg.sourceSymbol, msg.standardEquivalentSize);
+          } else if (msg.type === 'background_flow') {
+            // Broadcast to EVERY connected client (see broadcastBackgroundFlow
+            // in server.js) rather than filtered per-subscription like
+            // everything else here - so with 2 panels open, both would
+            // otherwise render the same entry twice. Only panel 0 (which
+            // always exists, even in 1-Window mode) renders it.
+            if (index === 0) renderBackgroundFlowEntry(msg);
           } else if (msg.type === 'flow_error') {
             console.error(`[flow:${panel.symbol}] ${msg.error}`);
             panel.pendingWatchExpiration = null;
@@ -3098,6 +3133,36 @@
         `</div>`;
     }
 
+    // Same MAJOR/OTHER threshold pattern Big Flow already uses (server
+    // sends every matching trade with no filtering - see tradierHub.js -
+    // so the "is this actually big enough to show" decision happens here,
+    // client-side, same as everywhere else in this app).
+    const BACKGROUND_FLOW_THRESHOLD_MAJOR = 250_000;
+    const BACKGROUND_FLOW_THRESHOLD_OTHER = 150_000;
+    const BACKGROUND_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ', 'IWM']);
+    const BACKGROUND_FLOW_LIST_MAX = 100; // higher than the per-ticker sidebar's 60 - this list covers 15 tickers at once, so it fills faster
+
+    function renderBackgroundFlowEntry(event) {
+      const threshold = BACKGROUND_FLOW_MAJOR_SYMBOLS.has(event.symbol) ? BACKGROUND_FLOW_THRESHOLD_MAJOR : BACKGROUND_FLOW_THRESHOLD_OTHER;
+      if (event.premium < threshold) return;
+
+      const listEl = document.getElementById('background-flow-list');
+      const isCall = event.optionType === 'CALL';
+      const formattedPrem = `$${(event.premium / 1000).toFixed(0)}k`;
+      const timeStr = formatTradeTime(event.timeMs);
+      const card = document.createElement('div');
+      card.className = `flow-card ${isCall ? 'call' : 'put'}`;
+      card.innerHTML = `
+        <div class="flow-details">
+          <span class="flow-strike"><span class="background-flow-ticker">${event.symbol}</span>${event.strike} ${event.optionType}</span>
+          <span style="color: #8fa0be; font-size: 10px;">${event.side || 'BOUGHT'} &middot; ${timeStr}</span>
+        </div>
+        <span class="flow-premium">${formattedPrem}</span>
+      `;
+      listEl.prepend(card);
+      while (listEl.children.length > BACKGROUND_FLOW_LIST_MAX) listEl.removeChild(listEl.lastChild);
+    }
+
     async function loadLeaderboard() {
       const listEl = document.getElementById('leaderboard-list');
       listEl.innerText = 'Loading...';
@@ -3145,6 +3210,14 @@
       } else {
         stopLeaderboardPolling();
       }
+    });
+
+    // Background Flow needs no polling (unlike the leaderboard above) -
+    // entries arrive pushed over the WebSocket in real time and keep
+    // accumulating in the list regardless of whether the panel is open;
+    // this button just shows/hides what's already there.
+    document.getElementById('background-flow-btn').addEventListener('click', () => {
+      document.getElementById('background-flow-panel').classList.toggle('hidden');
     });
 
     document.getElementById('leaderboard-panel').addEventListener('click', (e) => {
