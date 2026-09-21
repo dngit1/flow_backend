@@ -783,9 +783,9 @@
     <label><strong>Future - Min On Chart:</strong></label>
     <select id="futures-marker-floor-select">
       <option value="2000000">$2M+</option>
-      <option value="4000000">$4M+</option>
+      <option value="4000000" selected>$4M+</option>
       <option value="6000000">$6M+</option>
-      <option value="8000000" selected>$8M+</option>
+      <option value="8000000">$8M+</option>
       <option value="10000000">$10M+</option>
     </select>
 
@@ -992,7 +992,7 @@
 
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
-    let FUTURES_CHART_MARKER_FLOOR = 8_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow
+    let FUTURES_CHART_MARKER_FLOOR = parseInt(localStorage.getItem('xnlflow:futuresMarkerFloor'), 10) || 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow. Persisted locally (this is a global setting, not per-panel, unlike the ticker/timeframe/indicator settings) so the choice survives reloads.
     const CHART_MARKER_MAX = 30;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
@@ -1736,6 +1736,24 @@
         els.flowList.prepend(card);
         if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
 
+        // Net flow per candle (futures only) - EVERY qualifying trade that
+        // made it into the sidebar (the server already filtered to $2M+/
+        // $3M+ before ever sending it here), summed with sign (BUY
+        // positive, SELL negative) into one running total per candle.
+        // Deliberately NOT gated by FUTURES_CHART_MARKER_FLOOR below -
+        // that floor only controls which trades get their own arrow (to
+        // avoid visual clutter), but Net is a single aggregate number per
+        // candle, not an arrow-per-trade, so it should reflect everything
+        // that actually happened, not just the largest prints. Uses the
+        // same resolveMarkerTime bucketing so it always lines up with
+        // whichever candle a marker for this trade would land on.
+        if (isFutures) {
+          const barTime = panel.resolveMarkerTime(timestamp);
+          const contribution = isBuy ? contractCount : -contractCount;
+          panel.netFlowByBarTime.set(barTime, (panel.netFlowByBarTime.get(barTime) || 0) + contribution);
+          panel.positionNetFlowLabels();
+        }
+
         // Futures large-trades get their own, higher, separately-adjustable
         // chart-marker floor - the sidebar still shows everything the
         // server already decided was worth broadcasting ($2M+), but the
@@ -1743,19 +1761,6 @@
         // crowding that comes from combining ES/MES (or NQ/MNQ) flow into
         // one busy panel.
         if (isFutures && dollarValue < FUTURES_CHART_MARKER_FLOOR) return;
-
-        // Net flow per candle (futures only) - same qualifying trades as
-        // the chart markers above (same floor), just summed with sign
-        // (BUY positive, SELL negative) into one running total per
-        // candle instead of shown as individual arrows. Uses the same
-        // resolveMarkerTime bucketing so it always lines up with
-        // whichever candle the marker itself would land on.
-        if (isFutures) {
-          const barTime = panel.resolveMarkerTime(timestamp);
-          const contribution = isBuy ? contractCount : -contractCount;
-          panel.netFlowByBarTime.set(barTime, (panel.netFlowByBarTime.get(barTime) || 0) + contribution);
-          panel.positionNetFlowLabels();
-        }
 
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
@@ -1800,7 +1805,7 @@
           const formattedNet = isWholeNumber ? Math.round(net) : net.toFixed(1);
           const sign = net > 0 ? '+' : ''; // Math.round/toFixed already include the minus sign for negatives
           const color = net >= 0 ? '#00c853' : '#ff5252';
-          html.push(`<div class="net-flow-label" style="left:${x}px; top:${y - 6}px; color:${color};">${sign}${formattedNet}</div>`);
+          html.push(`<div class="net-flow-label" style="left:${x}px; top:${y - 2}px; color:${color};">Net: ${sign}${formattedNet}</div>`);
         }
         els.netFlowContainer.innerHTML = html.join('');
       };
@@ -3053,7 +3058,13 @@
 
     document.getElementById('futures-marker-floor-select').addEventListener('change', (e) => {
       FUTURES_CHART_MARKER_FLOOR = parseInt(e.target.value, 10);
+      localStorage.setItem('xnlflow:futuresMarkerFloor', FUTURES_CHART_MARKER_FLOOR);
     });
+    // Reflect whatever was actually loaded (a previously-saved value, or
+    // the $4M default) in the dropdown itself - the HTML's own "selected"
+    // attribute only covers the very first visit, before anything's ever
+    // been saved.
+    document.getElementById('futures-marker-floor-select').value = FUTURES_CHART_MARKER_FLOOR;
 
     function formatPremiumTotal(n) {
       if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
