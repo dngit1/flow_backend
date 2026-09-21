@@ -103,6 +103,19 @@ function broadcastStockFlow(symbol, payload) {
   }
 }
 
+// Unlike broadcastPrice/broadcastStockFlow above, this goes to EVERY
+// connected client regardless of which ticker they're currently
+// watching - background flow is a fixed 15-symbol watchlist independent
+// of whatever's loaded in either chart panel, so every browser should
+// see the same feed.
+function broadcastBackgroundFlow(payload) {
+  for (const [clientId, ws] of browserClients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'background_flow', ...payload }));
+    }
+  }
+}
+
 // Filtered server-side (not client-adjustable like the option flow
 // thresholds) - without this, every single trade on a liquid stock would
 // get broadcast to every watching client, which is far too much traffic.
@@ -160,6 +173,7 @@ const tradierHub = createTradierHub({
   onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
   flowBuffer,
   onFlowEvent: (event) => flowHistory.recordFlowEvent(event),
+  onBackgroundFlow: (flow) => broadcastBackgroundFlow(flow),
 });
 
 const futuresHub = createFuturesHub({
@@ -267,6 +281,14 @@ app.get('/api/flow-history', async (req, res) => {
 // the leaderboard just reports ready:false until this finishes.
 tradierHub.initLeaderboard().catch((err) => {
   console.error('[startup] Leaderboard init failed:', err.message);
+});
+
+// Same fire-and-forget pattern - sets up the permanent 15-symbol
+// background flow watch. Independent of the leaderboard (different
+// symbol list, different purpose), so it's fine if one fails without
+// affecting the other.
+tradierHub.initBackgroundFlow().catch((err) => {
+  console.error('[startup] Background flow init failed:', err.message);
 });
 
 // 1-day retention for saved flow history - nothing here ever deletes
