@@ -696,17 +696,9 @@
     }
 
     .wall-label.gex-magnet-label {
-      left: 12%; /* own lane - the High/Low Area lane, unused since those labels were removed - keeps Magnet clear of GEX Call/Put Wall/Flip (center) and S/R (25%) */
-      transform: translate(-50%, calc(-100% - 3px)); /* slight extra lift above the line, so this and Magnet 2 never fully overlap even if both land on the same price */
+      left: 12%; /* own lane, clear of High/Low Area (9%), S/R (25%), and GEX Call/Put Wall/Flip (center) */
       background-color: transparent;
       color: #fdd835;
-    }
-
-    .wall-label.gex-magnet-alt-label {
-      left: 12%;
-      transform: translate(-50%, calc(-100% + 3px)); /* sits a touch lower than Magnet 1 for the same reason */
-      background-color: transparent;
-      color: #ec407a;
     }
 
     /* End-of-line MA labels - positioned at the line's current value and
@@ -918,7 +910,6 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
-        <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="net-flow-container"></div>
       </div>
@@ -1008,7 +999,6 @@
         <div class="wall-label high-area-label" style="display:none;"></div>
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
-        <div class="wall-label gex-magnet-alt-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="net-flow-container"></div>
       </div>
@@ -1090,38 +1080,6 @@
         prevStrike = strike;
       }
       return null; // net GEX never actually crosses zero across the observed strikes
-    }
-
-    // Max Pain ("Magnet Alternate"): the strike where TOTAL payout to
-    // option HOLDERS - intrinsic value x open interest, summed across
-    // every call and put on the (single, nearest) expiration - would be
-    // SMALLEST if the stock settled exactly there. Equivalently: where
-    // option SELLERS collectively lose the least. A commonly-cited
-    // "pinning" candidate in retail trading content, kept here as a
-    // distinct, separately-labeled alternative to compare against the
-    // gamma-based Magnet - worth knowing the actual research on whether
-    // Max Pain predicts real pinning is considerably weaker/more mixed
-    // than the gamma-hedging mechanism the rest of GEX is built on.
-    function computeMaxPain(callOIByStrike, putOIByStrike) {
-      const allStrikes = [...new Set([...callOIByStrike.keys(), ...putOIByStrike.keys()])].sort((a, b) => a - b);
-      if (allStrikes.length === 0) return null;
-
-      let bestStrike = null;
-      let bestPayout = Infinity;
-      for (const settleAt of allStrikes) {
-        let payout = 0;
-        for (const [strike, oi] of callOIByStrike) {
-          if (settleAt > strike) payout += (settleAt - strike) * oi;
-        }
-        for (const [strike, oi] of putOIByStrike) {
-          if (settleAt < strike) payout += (strike - settleAt) * oi;
-        }
-        if (payout < bestPayout) {
-          bestPayout = payout;
-          bestStrike = settleAt;
-        }
-      }
-      return bestStrike;
     }
 
     // Remembers each panel's ticker, timeframe, and indicators across
@@ -1373,7 +1331,6 @@
         highAreaLabel: root.querySelector('.high-area-label'),
         lowAreaLabel: root.querySelector('.low-area-label'),
         gexMagnetLabel: root.querySelector('.gex-magnet-label'),
-        gexMagnetAltLabel: root.querySelector('.gex-magnet-alt-label'),
         indicatorList: root.querySelector('.indicator-list'),
       };
 
@@ -2041,8 +1998,6 @@
       panel.lowAreaPrice = null;
       panel.gexMagnetLine = null;
       panel.gexMagnetPrice = null;
-      panel.gexMagnetAltLine = null;
-      panel.gexMagnetAltPrice = null;
       panel.gexStrikeData = []; // [{strike, c, p, isWallRow}] - gamma x OI per strike, rendered by positionGexOverlay
 
       let indicatorIdCounter = 0;
@@ -2196,7 +2151,6 @@
         positionOne(panel.gexPutWallPrice, els.gexPutWallLabel);
         positionOne(panel.gexFlipPrice, els.gexFlipLabel);
         positionOne(panel.gexMagnetPrice, els.gexMagnetLabel);
-        positionOne(panel.gexMagnetAltPrice, els.gexMagnetAltLabel);
         positionOne(panel.highAreaPrice, els.highAreaLabel);
         positionOne(panel.lowAreaPrice, els.lowAreaLabel);
 
@@ -2430,7 +2384,7 @@
       panel.fetchGexData = async function () {
         const callGexByStrike = new Map();
         const putGexByStrike = new Map();
-        let nearestExpirationOptions = []; // for Magnet/Max Pain below - those need the SINGLE nearest expiration in isolation, not blended across all 6 like the walls
+        let nearestExpirationOptions = []; // for Magnet below - needs the SINGLE nearest expiration in isolation, not blended across all 6 like the walls
         try {
           const allExpirations = await fetchAllExpirations(panel.symbol);
           const targetExpirations = allExpirations.slice(0, GEX_EXPIRATION_COUNT);
@@ -2499,21 +2453,14 @@
           // expiring soonest, and blending in far-dated expirations would
           // dilute exactly the concentration that causes it.
           const magnetCombinedByStrike = new Map(); // gamma x OI, calls + puts combined (not signed/separated like the walls)
-          const magnetCallOIByStrike = new Map();
-          const magnetPutOIByStrike = new Map();
           for (const o of nearestExpirationOptions) {
             const gamma = o.greeks?.gamma;
             const oi = o.open_interest;
             if (gamma != null && oi > 0) {
               magnetCombinedByStrike.set(o.strike, (magnetCombinedByStrike.get(o.strike) || 0) + gamma * oi * 100);
             }
-            if (oi > 0) {
-              const oiMap = o.option_type === 'call' ? magnetCallOIByStrike : magnetPutOIByStrike;
-              oiMap.set(o.strike, (oiMap.get(o.strike) || 0) + oi);
-            }
           }
           const gexMagnet = topStrike(magnetCombinedByStrike);
-          const gexMagnetAlt = computeMaxPain(magnetCallOIByStrike, magnetPutOIByStrike);
 
           const allStrikes = new Set([...callVolumeByStrike.keys(), ...putVolumeByStrike.keys()]);
           const sortedStrikes = [...allStrikes].sort((a, b) => a - b);
@@ -2567,7 +2514,6 @@
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
           if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
-          if (panel.gexMagnetAltLine) { candlestickSeries.removePriceLine(panel.gexMagnetAltLine); panel.gexMagnetAltLine = null; }
           if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
           if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
 
@@ -2579,7 +2525,6 @@
           panel.gexPutWallPrice = gexPutWall;
           panel.gexFlipPrice = gexFlip;
           panel.gexMagnetPrice = gexMagnet;
-          panel.gexMagnetAltPrice = gexMagnetAlt;
           panel.highAreaPrice = highArea;
           panel.lowAreaPrice = lowArea;
 
@@ -2621,17 +2566,7 @@
               lineStyle: LightweightCharts.LineStyle.Dotted,
               axisLabelVisible: true,
             });
-            els.gexMagnetLabel.innerText = `Magnet 1: ${gexMagnet}`;
-          }
-          if (gexMagnetAlt != null) {
-            panel.gexMagnetAltLine = candlestickSeries.createPriceLine({
-              price: gexMagnetAlt,
-              color: '#ec407a',
-              lineWidth: 1,
-              lineStyle: LightweightCharts.LineStyle.Dotted,
-              axisLabelVisible: true,
-            });
-            els.gexMagnetAltLabel.innerText = `Magnet 2: ${gexMagnetAlt}`;
+            els.gexMagnetLabel.innerText = `Magnet: ${gexMagnet}`;
           }
           if (highArea != null) {
             panel.highAreaLine = candlestickSeries.createPriceLine({
@@ -2745,9 +2680,7 @@
         panel.gexFlipPrice = null;
         els.gexFlipLabel.style.display = 'none';
         panel.gexMagnetPrice = null;
-        panel.gexMagnetAltPrice = null;
         els.gexMagnetLabel.style.display = 'none';
-        els.gexMagnetAltLabel.style.display = 'none';
         panel.highAreaPrice = null;
         panel.lowAreaPrice = null;
         els.highAreaLabel.style.display = 'none';
@@ -2985,17 +2918,14 @@
           if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
           if (panel.gexFlipLine) { candlestickSeries.removePriceLine(panel.gexFlipLine); panel.gexFlipLine = null; }
           if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
-          if (panel.gexMagnetAltLine) { candlestickSeries.removePriceLine(panel.gexMagnetAltLine); panel.gexMagnetAltLine = null; }
           panel.gexCallWallPrice = null;
           panel.gexPutWallPrice = null;
           panel.gexFlipPrice = null;
           panel.gexMagnetPrice = null;
-          panel.gexMagnetAltPrice = null;
           els.gexCallWallLabel.style.display = 'none';
           els.gexPutWallLabel.style.display = 'none';
           els.gexFlipLabel.style.display = 'none';
           els.gexMagnetLabel.style.display = 'none';
-          els.gexMagnetAltLabel.style.display = 'none';
           panel.gexStrikeData = [];
         } else if (els.expirationSelect.value) {
           // Re-fetch and redraw fresh rather than trying to resurrect
