@@ -1000,7 +1000,7 @@
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
     let FUTURES_CHART_MARKER_FLOOR = parseInt(localStorage.getItem('xnlflow:futuresMarkerFloor'), 10) || 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow. Persisted locally (this is a global setting, not per-panel, unlike the ticker/timeframe/indicator settings) so the choice survives reloads.
-    const CHART_MARKER_MAX = 30;
+    const CHART_MARKER_MAX = 60;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
     const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
