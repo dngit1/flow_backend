@@ -739,6 +739,10 @@
       pointer-events: none;
     }
 
+    .net-flow-label.below {
+      transform: translate(-50%, 4px); /* anchors from the top instead of bottom, so it sits below its point rather than above */
+    }
+
     .candle-timer {
       position: absolute;
       right: 0;
@@ -1797,15 +1801,18 @@
         for (const [barTime, net] of panel.netFlowByBarTime) {
           const bar = barByTime.get(barTime);
           if (!bar) continue; // candle has since scrolled out of the loaded data - nothing to anchor the label to
+          const isPositive = net >= 0;
           const x = chart.timeScale().timeToCoordinate(barTime);
-          const y = candlestickSeries.priceToCoordinate(bar.high);
+          const y = candlestickSeries.priceToCoordinate(isPositive ? bar.high : bar.low);
           if (x == null || y == null || x < 0 || x > width || y < 0 || y > height) continue;
 
           const isWholeNumber = Math.abs(net - Math.round(net)) < 0.05;
           const formattedNet = isWholeNumber ? Math.round(net) : net.toFixed(1);
           const sign = net > 0 ? '+' : ''; // Math.round/toFixed already include the minus sign for negatives
-          const color = net >= 0 ? '#00c853' : '#ff5252';
-          html.push(`<div class="net-flow-label" style="left:${x}px; top:${y - 2}px; color:${color};">Net: ${sign}${formattedNet}</div>`);
+          const color = isPositive ? '#00c853' : '#ff5252';
+          const posClass = isPositive ? '' : ' below';
+          const topOffset = isPositive ? y - 2 : y + 2;
+          html.push(`<div class="net-flow-label${posClass}" style="left:${x}px; top:${topOffset}px; color:${color};">${sign}${formattedNet}</div>`);
         }
         els.netFlowContainer.innerHTML = html.join('');
       };
