@@ -1897,6 +1897,14 @@
         // individual tick comparisons as before.
         const hasAggregateRange = aggHigh != null && aggLow != null;
 
+        // TEMP DIAGNOSTIC: shows exactly what each live tick is
+        // contributing to volume - helps tell apart "ticks aren't
+        // arriving," "ticks arrive but with size=0/undefined," and
+        // "volume IS accumulating, just slowly" (e.g. thin IEX coverage
+        // on SPY/QQQ). Remove once the "volume doesn't build up" report
+        // is resolved.
+        console.log(`[vol:${panel.symbol}] tick price=${tradePrice} tradeSize=${tradeSize} aggVolume=${aggVolume} currentBarVolume(before)=${panel.currentBarVolume}`);
+
         // Independent of the displayed-chart bucket logic below - S/R now
         // runs on its own fixed 15m series regardless of what TF is on
         // screen (see panel.updateSr15mBars above).
