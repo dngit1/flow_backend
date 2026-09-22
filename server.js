@@ -283,13 +283,15 @@ tradierHub.initLeaderboard().catch((err) => {
   console.error('[startup] Leaderboard init failed:', err.message);
 });
 
-// Same fire-and-forget pattern - sets up the permanent 15-symbol
-// background flow watch. Independent of the leaderboard (different
-// symbol list, different purpose), so it's fine if one fails without
-// affecting the other.
-tradierHub.initBackgroundFlow().catch((err) => {
-  console.error('[startup] Background flow init failed:', err.message);
-});
+// TEMPORARILY DISABLED - suspected contributor to overall server load
+// (an additional ~1080 watched contracts, plus ~90 chain fetches at
+// startup) around the time stock chart updates and normal flow started
+// acting up. Uncomment to re-enable once that's confirmed resolved and
+// stable; nothing else needs to change; tradierHub.js's implementation
+// is untouched.
+// tradierHub.initBackgroundFlow().catch((err) => {
+//   console.error('[startup] Background flow init failed:', err.message);
+// });
 
 // 1-day retention for saved flow history - nothing here ever deletes
 // itself automatically, so this has to run on a schedule. Once at
