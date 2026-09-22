@@ -1507,6 +1507,11 @@
             if (msg.expiration === els.expirationSelect.value) return;
             panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side, formatExpirationLabel(msg.expiration));
           } else if (msg.type === 'flow') {
+            // TEMP DIAGNOSTIC: confirms the message actually reaches this
+            // handler at all, and what premium/threshold comparison
+            // happens next - remove once the "small flow not appearing"
+            // investigation is resolved.
+            console.log(`[flow:${panel.symbol}] received type=flow premium=${msg.premium} MIN_FLOW_PREMIUM=${MIN_FLOW_PREMIUM}`);
             if (msg.premium < MIN_FLOW_PREMIUM) return;
             panel.addOptionFlowMarker(msg.optionType, msg.strike, msg.premium, msg.timeMs, msg.side);
           } else if (msg.type === 'flow_watching') {
@@ -1648,7 +1653,14 @@
       };
 
       panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel, skipCap) {
-        if (!panel.lastBarTime) return;
+        // TEMP DIAGNOSTIC: confirms whether this guard is the thing
+        // silently dropping flow events (nothing renders, no error, no
+        // trace) - remove once the "small flow not appearing" investigation
+        // is resolved.
+        if (!panel.lastBarTime) {
+          console.warn(`[flow:${panel.symbol}] DROPPED - lastBarTime not set yet. type=${type} strike=${strike} premium=${premiumVal}`);
+          return;
+        }
 
         const isCall = type === 'CALL';
         const isSold = side === 'SOLD';
@@ -1896,14 +1908,6 @@
         // don't pass these, so they keep synthesizing range from
         // individual tick comparisons as before.
         const hasAggregateRange = aggHigh != null && aggLow != null;
-
-        // TEMP DIAGNOSTIC: shows exactly what each live tick is
-        // contributing to volume - helps tell apart "ticks aren't
-        // arriving," "ticks arrive but with size=0/undefined," and
-        // "volume IS accumulating, just slowly" (e.g. thin IEX coverage
-        // on SPY/QQQ). Remove once the "volume doesn't build up" report
-        // is resolved.
-        console.log(`[vol:${panel.symbol}] tick price=${tradePrice} tradeSize=${tradeSize} aggVolume=${aggVolume} currentBarVolume(before)=${panel.currentBarVolume}`);
 
         // Independent of the displayed-chart bucket logic below - S/R now
         // runs on its own fixed 15m series regardless of what TF is on
