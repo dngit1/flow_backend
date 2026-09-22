@@ -822,7 +822,8 @@
       <div id="leaderboard-list">Loading...</div>
     </div>
 
-    <button id="background-flow-btn" class="leaderboard-btn">Background Flow</button>
+    <!-- TEMPORARILY HIDDEN alongside server.js's disabled initBackgroundFlow() call - showing this button with no backend watcher running would just open a permanently-empty panel. Remove style="display:none;" when re-enabling. -->
+    <button id="background-flow-btn" class="leaderboard-btn" style="display:none;">Background Flow</button>
     <div id="background-flow-panel" class="leaderboard-panel hidden">
       <h4>Background Flow - SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, NFLX, AVGO, COIN, PLTR</h4>
       <div id="background-flow-list"></div>
