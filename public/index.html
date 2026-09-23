@@ -2845,6 +2845,8 @@
           els.flowList.innerHTML = '';
           panel.flowMarkers = [];
           candlestickSeries.setMarkers([]);
+          panel.netFlowByBarTime = new Map();
+          els.netFlowContainer.innerHTML = '';
 
           for (const event of data.events || []) {
             if (event.assetType === 'option') {
