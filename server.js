@@ -320,6 +320,15 @@ tradierHub.initLeaderboard().catch((err) => {
   console.error('[startup] Leaderboard init failed:', err.message);
 });
 
+// Permanent background watch for ES/NQ/GC - keeps price_bars and
+// flow_events accumulating for these even with nobody's browser open.
+// Much lighter than the (currently disabled) stock version: 3 roots, one
+// contract each, reusing the same subscribe() path a real browser client
+// uses rather than a separate mechanism - see futuresHub.js.
+futuresHub.initBackgroundWatch().catch((err) => {
+  console.error('[startup] Futures background watch init failed:', err.message);
+});
+
 // TEMPORARILY DISABLED - suspected contributor to overall server load
 // (an additional ~1080 watched contracts, plus ~90 chain fetches at
 // startup) around the time stock chart updates and normal flow started
