@@ -13,6 +13,7 @@ const { createDataProxyRouter } = require('./lib/dataProxy');
 const { createFlowBuffer } = require('./lib/flowBuffer');
 const cache = require('./lib/cache');
 const flowHistory = require('./lib/flowHistory');
+const priceHistory = require('./lib/priceHistory');
 // NOTE: auth (lib/auth.js, lib/mailer.js) is intentionally NOT wired in
 // here - this is the deploy-now version, auth requires a working
 // Postgres + Google OAuth setup that hasn't been done yet. The
@@ -178,7 +179,24 @@ const tradierHub = createTradierHub({
 
 const futuresHub = createFuturesHub({
   apiKey: MASSIVE_API_KEY,
-  onPrice: (ticker, payload) => broadcastPrice(ticker, payload),
+  onPrice: (ticker, payload) => {
+    broadcastPrice(ticker, payload);
+    // Only AM aggregate messages (completed 1-min bars) carry open/high/
+    // low - raw trade ticks are price-only and drive live price alone,
+    // never saved as bar history.
+    if (payload.open != null) {
+      priceHistory.recordPriceBar({
+        symbol: ticker,
+        timeframe: '1min',
+        barTimeMs: payload.timeMs,
+        open: payload.open,
+        high: payload.high,
+        low: payload.low,
+        close: payload.close,
+        volume: payload.volume,
+      });
+    }
+  },
   onBigTrade: (ticker, payload) => {
     flowBuffer.record(`stockflow:${ticker}`, payload);
     broadcastStockFlow(ticker, payload);
@@ -276,6 +294,25 @@ app.get('/api/flow-history', async (req, res) => {
   }
 });
 
+// GET /api/price-history?symbol=XYZ&timeframe=1min&sinceMs=... - saved
+// completed bars for this symbol (futures only for now - see
+// migrations/003_price_history.sql), oldest first, within the 30-day
+// retention window. sinceMs is optional.
+app.get('/api/price-history', async (req, res) => {
+  const symbol = String(req.query.symbol || '').toUpperCase();
+  const timeframe = String(req.query.timeframe || '1min');
+  const sinceMs = req.query.sinceMs ? Number(req.query.sinceMs) : undefined;
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+
+  try {
+    const bars = await priceHistory.getPriceHistory(symbol, timeframe, sinceMs);
+    res.json({ bars });
+  } catch (err) {
+    console.error(`[price-history] failed for ${symbol}:`, err.message);
+    res.status(502).json({ error: 'Unable to load price history right now' });
+  }
+});
+
 // Fire-and-forget at startup - fetches near-the-money contracts for every
 // curated leaderboard symbol once. Doesn't block the server from starting;
 // the leaderboard just reports ready:false until this finishes.
@@ -300,6 +337,10 @@ tradierHub.initLeaderboard().catch((err) => {
 // day's worth of data, without running a DELETE on every single event.
 flowHistory.purgeOldFlowEvents();
 setInterval(() => flowHistory.purgeOldFlowEvents(), 60 * 60_000);
+
+// Same pattern, 30-day retention instead of 1-day - see priceHistory.js.
+priceHistory.purgeOldPriceBars();
+setInterval(() => priceHistory.purgeOldPriceBars(), 60 * 60_000);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
