@@ -1457,6 +1457,7 @@
         intervalSeconds: INTERVAL_SECONDS[initialInterval] || 60, // used to bucket live ticks into the right candle width
         flowMarkers: [],
         netFlowByBarTime: new Map(), // futures only - barTime -> signed net contract count (BUY positive, SELL negative) for trades clearing FUTURES_CHART_MARKER_FLOOR
+        pendingSidebarCards: [], // buffer used during Replay's deferRender batching - see renderFlowSidebarCard/addStockFlowMarker
         lastBarTime: null,
         lastBarPrice: 0,
         currentBarVolume: 0,
@@ -1619,7 +1620,7 @@
         panel.centerLastCandle();
       };
 
-      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel, skipCap) {
+      panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel, skipCap, deferRender) {
         const isCall = type === 'CALL';
         const card = document.createElement('div');
         card.className = `flow-card ${isCall ? 'call' : 'put'}${expirationLabel ? ' bigflow' : ''}`;
@@ -1631,6 +1632,16 @@
           </div>
           <span class="flow-premium">${premiumStr}</span>
         `;
+        if (deferRender) {
+          // Buffered instead of touching the DOM directly - hundreds of
+          // individual prepend() calls (one per Replay event) was itself
+          // enough raw DOM-mutation cost to visibly hang the tab, even
+          // after removing the O(n^2) marker/net-flow redraws. Replay
+          // flushes this buffer into a single batched insertion once,
+          // after its loop finishes.
+          panel.pendingSidebarCards.push(card);
+          return;
+        }
         els.flowList.prepend(card);
         if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
       };
@@ -1676,7 +1687,7 @@
         const sideLabel = side || 'BOUGHT';
         const timeStr = timestamp ? formatTradeTime(timestamp) : '';
 
-        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel, skipCap);
+        panel.renderFlowSidebarCard(type, strike, formattedPrem, sideLabel, timeStr, expirationLabel, skipCap, deferRender);
 
         if (premiumVal < CHART_MARKER_PREMIUM_FLOOR) return;
 
@@ -1759,8 +1770,12 @@
           </div>
           ${primaryText ? `<span class="flow-premium">${primaryText}</span>` : ''}
         `;
-        els.flowList.prepend(card);
-        if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+        if (deferRender) {
+          panel.pendingSidebarCards.push(card);
+        } else {
+          els.flowList.prepend(card);
+          if (!skipCap && els.flowList.children.length > SIDEBAR_FLOW_MAX) els.flowList.removeChild(els.flowList.lastChild);
+        }
 
         // Net flow per candle (futures only) - EVERY qualifying trade that
         // made it into the sidebar (the server already filtered to $2M+/
@@ -2876,6 +2891,7 @@
           candlestickSeries.setMarkers([]);
           panel.netFlowByBarTime = new Map();
           els.netFlowContainer.innerHTML = '';
+          panel.pendingSidebarCards = [];
 
           for (const event of data.events || []) {
             if (event.assetType === 'option') {
@@ -2889,15 +2905,27 @@
             }
           }
 
-          // The loop above deferred both the chart-marker redraw and the
-          // net-flow label rebuild on every individual event (deferRender
-          // =true) specifically to avoid doing that expensive work once
-          // per event - with hundreds of saved events (very plausible now
-          // that the ES/NQ/GC background watch runs continuously), that
-          // was O(n^2) work that visibly froze the tab. Do each exactly
-          // once now that all the data is in place.
+          // The loop above deferred the chart-marker redraw, the net-flow
+          // label rebuild, AND every sidebar card's DOM insertion on every
+          // individual event (deferRender=true) - hundreds of saved
+          // events (very plausible now that the ES/NQ/GC background watch
+          // runs continuously) meant hundreds of unbatched DOM operations,
+          // visibly freezing the tab even after the marker/net-flow
+          // redraws alone were fixed. Do all three exactly once now.
           candlestickSeries.setMarkers(panel.flowMarkers);
           panel.positionNetFlowLabels();
+          if (panel.pendingSidebarCards.length > 0) {
+            const fragment = document.createDocumentFragment();
+            // Cards were buffered oldest-to-newest (the loop's own order).
+            // Insert in reverse so the most recent ends up first/top,
+            // matching what individual prepend() calls would have
+            // produced.
+            for (let i = panel.pendingSidebarCards.length - 1; i >= 0; i--) {
+              fragment.appendChild(panel.pendingSidebarCards[i]);
+            }
+            els.flowList.appendChild(fragment); // flowList was already cleared above, so this is its only content
+            panel.pendingSidebarCards = [];
+          }
 
           if (!data.events || data.events.length === 0) {
             els.flowList.innerHTML = '<div style="padding: 8px; color: #8fa0be; font-size: 12px;">No saved flow for today yet</div>';
