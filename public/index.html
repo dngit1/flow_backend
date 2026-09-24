@@ -868,6 +868,10 @@
             Option Volume (stock only)
           </label>
           <label class="sr-toggle-row">
+            <input type="checkbox" class="flow-markers-toggle-checkbox" checked />
+            Flow Markers
+          </label>
+          <label class="sr-toggle-row">
             <input type="checkbox" class="macd-toggle-checkbox" checked />
             MACD
           </label>
@@ -955,6 +959,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="flow-markers-toggle-checkbox" checked />
+            Flow Markers
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="macd-toggle-checkbox" checked />
@@ -1122,6 +1130,7 @@
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
           macdEnabled: panel.macdEnabled,
+          flowMarkersVisible: panel.flowMarkersVisible,
           indicators: panel.indicators.map((ind) => ({
             type: ind.type,
             period: ind.period,
@@ -1306,6 +1315,7 @@
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
+      const initialFlowMarkersVisible = saved?.flowMarkersVisible !== false; // default on; only off if explicitly saved as off
       const els = {
         tickerInput: root.querySelector('.ticker-input'),
         searchBtn: root.querySelector('.search-btn'),
@@ -1333,6 +1343,7 @@
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
+        flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
         gexToggleCheckbox: root.querySelector('.gex-toggle-checkbox'),
         gexOverlayContainer: root.querySelector('.gex-overlay-container'),
         gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
@@ -1354,6 +1365,7 @@
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
       els.macdToggleCheckbox.checked = initialMacdEnabled;
+      els.flowMarkersToggleCheckbox.checked = initialFlowMarkersVisible;
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
@@ -1468,6 +1480,7 @@
         flowMarkers: [],
         netFlowByBarTime: new Map(), // futures only - barTime -> signed net contract count (BUY positive, SELL negative) for trades clearing FUTURES_CHART_MARKER_FLOOR
         pendingSidebarCards: [], // buffer used during Replay's deferRender batching - see renderFlowSidebarCard/addStockFlowMarker
+        flowMarkersVisible: initialFlowMarkersVisible, // chart-only toggle - sidebar stays visible regardless of this
         lastBarTime: null,
         lastBarPrice: 0,
         currentBarVolume: 0,
@@ -1731,7 +1744,15 @@
         // watch running continuously is exactly what produces that much
         // volume). Replay passes deferRender=true and does this once,
         // after its loop finishes, instead.
-        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkers);
+        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkersVisible ? panel.flowMarkers : []);
+      };
+
+      // Chart-only toggle (sidebar list is unaffected) - the array
+      // itself always keeps accumulating regardless of this flag, so
+      // toggling back on just re-shows whatever's already there, no
+      // re-fetch needed.
+      panel.applyFlowMarkersVisibility = function () {
+        candlestickSeries.setMarkers(panel.flowMarkersVisible ? panel.flowMarkers : []);
       };
 
       // Large trades on the underlying STOCK's shares (not options) -
@@ -1830,7 +1851,7 @@
         });
         if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
-        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkers);
+        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkersVisible ? panel.flowMarkers : []);
       };
 
       // Renders one label per candle that has qualifying futures flow,
@@ -3037,7 +3058,7 @@
           // runs continuously) meant hundreds of unbatched DOM operations,
           // visibly freezing the tab even after the marker/net-flow
           // redraws alone were fixed. Do all three exactly once now.
-          candlestickSeries.setMarkers(panel.flowMarkers);
+          candlestickSeries.setMarkers(panel.flowMarkersVisible ? panel.flowMarkers : []);
           panel.positionNetFlowLabels();
           if (panel.pendingSidebarCards.length > 0) {
             const fragment = document.createDocumentFragment();
@@ -3152,6 +3173,12 @@
       els.macdToggleCheckbox.addEventListener('change', () => {
         panel.macdEnabled = els.macdToggleCheckbox.checked;
         panel.updateMacd(panel.closeHistory);
+        saveChartSettings(panel);
+      });
+
+      els.flowMarkersToggleCheckbox.addEventListener('change', () => {
+        panel.flowMarkersVisible = els.flowMarkersToggleCheckbox.checked;
+        panel.applyFlowMarkersVisibility();
         saveChartSettings(panel);
       });
 
