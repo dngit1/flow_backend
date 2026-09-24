@@ -737,7 +737,7 @@
       z-index: 14;
       padding: 1px 6px;
       border-radius: 3px;
-      font-size: 10px;
+      font-size: 13px;
       font-weight: 700;
       white-space: nowrap;
       pointer-events: none;
@@ -1379,6 +1379,7 @@
         borderVisible: false,
         wickUpColor: '#00c853',
         wickDownColor: '#ff5252',
+        priceLineColor: '#fdd835', // the live current-price line - fixed yellow instead of defaulting to green/red based on up/down direction
       });
 
       const volumeSeries = chart.addHistogramSeries({
