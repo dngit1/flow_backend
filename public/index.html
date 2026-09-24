@@ -2888,6 +2888,54 @@
         if (symbol && symbol !== panel.symbol) panel.loadInitialSeedData(symbol);
       });
 
+      // TEMP DIAGNOSTIC: generates a controlled number of FAKE option
+      // events and runs them through the exact same code path Replay
+      // uses (addOptionFlowMarker with skipCap=true, deferRender=true,
+      // then one final batched render) - lets us reproduce and measure
+      // the reported stock-Replay freeze without needing the market open
+      // or real accumulated data. Call from the browser console, e.g.:
+      //   panels[0].stressTestOptionReplay(500)
+      // Try increasing counts (100, 500, 1000, 2000...) to find where it
+      // actually starts hanging, and compare against the real event
+      // count from /api/flow-history to see if volume alone explains it.
+      // Remove once the freeze is resolved.
+      panel.stressTestOptionReplay = function (count) {
+        count = count || 500;
+        console.log(`[stress-test] Generating ${count} fake option events for ${panel.symbol}...`);
+
+        els.flowList.innerHTML = '';
+        panel.flowMarkers = [];
+        candlestickSeries.setMarkers([]);
+        panel.pendingSidebarCards = [];
+
+        const t0 = performance.now();
+        const now = Date.now();
+        const basePrice = panel.lastBarPrice || 100;
+
+        for (let i = 0; i < count; i++) {
+          const isCall = Math.random() > 0.5;
+          const strike = Math.round(basePrice + (Math.random() - 0.5) * 20);
+          const premium = 25000 + Math.random() * 200000;
+          const side = Math.random() > 0.5 ? 'BOUGHT' : 'SOLD';
+          const timestamp = now - Math.floor(Math.random() * 6 * 60 * 60_000); // spread across the last 6 hours
+          panel.addOptionFlowMarker(isCall ? 'CALL' : 'PUT', strike, premium, timestamp, side, null, true, true);
+        }
+
+        candlestickSeries.setMarkers(panel.flowMarkers);
+        panel.positionNetFlowLabels();
+        if (panel.pendingSidebarCards.length > 0) {
+          const fragment = document.createDocumentFragment();
+          for (let i = panel.pendingSidebarCards.length - 1; i >= 0; i--) {
+            fragment.appendChild(panel.pendingSidebarCards[i]);
+          }
+          els.flowList.appendChild(fragment);
+          panel.pendingSidebarCards = [];
+        }
+
+        const elapsed = performance.now() - t0;
+        console.log(`[stress-test] Rendered ${count} fake option events in ${elapsed.toFixed(0)}ms`);
+      };
+
       els.replayBtn.addEventListener('click', async () => {
         const symbol = panel.symbol;
         const originalLabel = els.replayBtn.innerText;
