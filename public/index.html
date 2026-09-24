@@ -2875,13 +2875,15 @@
         // for all tickers.
         saveChartSettings(panel);
 
-        // Automatically backfill today's saved flow on load, same as
-        // clicking Replay manually - futures only for now, matching
-        // where the button itself is enabled above. Runs silently: a
-        // failure here shouldn't show an error, it should just leave
-        // the chart showing today's flow starting from empty, same as
-        // it always did before this existed.
-        if (isFuturesTicker(symbol)) panel.runReplay({ silent: true });
+        // REVERTED the automatic on-load Replay trigger that was here -
+        // it dumped the whole day's history onto the sidebar immediately
+        // on load, burying the most recent flow under a large volume of
+        // older entries. Initial load now shows only recent/live flow
+        // again (via flowBuffer's own separate backfill), and the full
+        // day's history - now capped at MAX_HISTORY_EVENTS=300 in
+        // flowHistory.js, focused on the most recent events rather than
+        // the whole day - stays behind the Replay button, as originally
+        // designed.
 
         panel.sendWS({ type: 'subscribe_price', symbol });
 
