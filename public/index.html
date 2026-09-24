@@ -231,6 +231,15 @@
       background-color: #364153;
     }
 
+    .toolbar button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .toolbar button:disabled:hover {
+      background-color: #2b3548; /* cancel the normal hover color change while disabled */
+    }
+
     .toolbar select {
       background-color: #1f293d;
       color: #ffffff;
@@ -2815,6 +2824,13 @@
         panel.computeAndDrawSupportResistance();
         panel.positionNetFlowLabels();
         panel.hasLoadedOnce = true;
+        // TEMPORARY: Replay confirmed freezing the tab for stock tickers
+        // (root cause not yet found - it works fine for futures, which
+        // goes through a different code path). Disabled specifically for
+        // stocks until that's fixed, rather than leave a broken button
+        // live. Re-enable once addOptionFlowMarker's freeze is diagnosed.
+        els.replayBtn.disabled = !isFuturesTicker(symbol);
+        els.replayBtn.title = isFuturesTicker(symbol) ? '' : 'Temporarily unavailable for stocks - investigating a freezing issue';
         saveChartSettings(panel);
 
         panel.sendWS({ type: 'subscribe_price', symbol });
