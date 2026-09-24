@@ -1482,6 +1482,13 @@
             panel.sendWS({ type: 'subscribe_price', symbol: panel.symbol });
             const currentExpiration = els.expirationSelect.value;
             if (currentExpiration) panel.sendWS({ type: 'watch_flow', symbol: panel.symbol, expiration: currentExpiration });
+            // Big Flow (6-expiration watch) was previously only ever sent
+            // once, on initial load - any later browser-side reconnect
+            // (a WiFi blip, laptop sleep, anything) silently dropped it
+            // forever with nothing ever re-requesting it, until a full
+            // page reload. Resending it here alongside the other two
+            // fixes that.
+            if (!isFuturesTicker(panel.symbol)) panel.sendWS({ type: 'watch_big_flow', symbol: panel.symbol, spotPrice: panel.lastBarPrice });
           }
         };
 
