@@ -2830,9 +2830,21 @@
         // goes through a different code path). Disabled specifically for
         // stocks until that's fixed, rather than leave a broken button
         // live. Re-enable once addOptionFlowMarker's freeze is diagnosed.
-        els.replayBtn.disabled = !isFuturesTicker(symbol);
-        els.replayBtn.title = isFuturesTicker(symbol) ? '' : 'Temporarily unavailable for stocks - investigating a freezing issue';
+        // Replay was temporarily disabled for stocks after a real freeze
+        // (traced to a duplicate-recording bug inflating a single
+        // symbol's daily event count into six figures - see
+        // tradierHub.js's recentlyRecordedTrades and flowHistory.js's
+        // MAX_HISTORY_EVENTS cap). Both are fixed now, so it's re-enabled
+        // for all tickers.
         saveChartSettings(panel);
+
+        // Automatically backfill today's saved flow on load, same as
+        // clicking Replay manually - futures only for now, matching
+        // where the button itself is enabled above. Runs silently: a
+        // failure here shouldn't show an error, it should just leave
+        // the chart showing today's flow starting from empty, same as
+        // it always did before this existed.
+        if (isFuturesTicker(symbol)) panel.runReplay({ silent: true });
 
         panel.sendWS({ type: 'subscribe_price', symbol });
 
@@ -2958,11 +2970,20 @@
         console.log(`[fetch-test] timing: network=${(fetchDone - t0).toFixed(0)}ms readText=${(textDone - fetchDone).toFixed(0)}ms JSONparse=${(parseDone - textDone).toFixed(0)}ms total=${(parseDone - t0).toFixed(0)}ms`);
       };
 
-      els.replayBtn.addEventListener('click', async () => {
+      // Reusable core of Replay - used both by the button (silent=false,
+      // shows loading/error states) and by the automatic on-load trigger
+      // for futures tickers (silent=true, runs quietly in the
+      // background without touching button state or showing an error
+      // message if it fails - a failed auto-backfill shouldn't be more
+      // intrusive than just showing today's flow starting from empty).
+      panel.runReplay = async function (options) {
+        const silent = (options && options.silent) || false;
         const symbol = panel.symbol;
         const originalLabel = els.replayBtn.innerText;
-        els.replayBtn.disabled = true;
-        els.replayBtn.innerText = 'Loading...';
+        if (!silent) {
+          els.replayBtn.disabled = true;
+          els.replayBtn.innerText = 'Loading...';
+        }
 
         try {
           const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
@@ -3014,17 +3035,23 @@
             panel.pendingSidebarCards = [];
           }
 
-          if (!data.events || data.events.length === 0) {
+          if (!silent && (!data.events || data.events.length === 0)) {
             els.flowList.innerHTML = '<div style="padding: 8px; color: #8fa0be; font-size: 12px;">No saved flow for today yet</div>';
           }
         } catch (err) {
           console.error(`[replay:${symbol}] failed:`, err);
-          els.flowList.innerHTML = '<div style="padding: 8px; color: #ff5252; font-size: 12px;">Failed to load flow history</div>';
+          if (!silent) {
+            els.flowList.innerHTML = '<div style="padding: 8px; color: #ff5252; font-size: 12px;">Failed to load flow history</div>';
+          }
         } finally {
-          els.replayBtn.disabled = false;
-          els.replayBtn.innerText = originalLabel;
+          if (!silent) {
+            els.replayBtn.disabled = false;
+            els.replayBtn.innerText = originalLabel;
+          }
         }
-      });
+      };
+
+      els.replayBtn.addEventListener('click', () => panel.runReplay({ silent: false }));
 
       els.tickerInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') els.searchBtn.click();
