@@ -1660,7 +1660,7 @@
         return candidate;
       };
 
-      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel, skipCap) {
+      panel.addOptionFlowMarker = function (type, strike, premiumVal, timestamp, side, expirationLabel, skipCap, deferRender) {
         // TEMP DIAGNOSTIC: confirms whether this guard is the thing
         // silently dropping flow events (nothing renders, no error, no
         // trace) - remove once the "small flow not appearing" investigation
@@ -1703,13 +1703,20 @@
         });
         if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
-        candlestickSeries.setMarkers(panel.flowMarkers);
+        // Replaying hundreds of saved events would otherwise call this on
+        // EVERY single one, redrawing the growing marker array from
+        // scratch each time - O(n^2) work that visibly freezes the tab
+        // once there's enough saved history (the ES/NQ/GC background
+        // watch running continuously is exactly what produces that much
+        // volume). Replay passes deferRender=true and does this once,
+        // after its loop finishes, instead.
+        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkers);
       };
 
       // Large trades on the underlying STOCK's shares (not options) -
       // separate from the option-flow functions above since shares don't
       // have a strike/type/expiration, just size and dollar value.
-      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol, standardEquivalentSize, skipCap) {
+      panel.addStockFlowMarker = function (shareSize, dollarValue, timestamp, side, sourceSymbol, standardEquivalentSize, skipCap, deferRender) {
         if (!panel.lastBarTime) return;
 
         const isFutures = isFuturesTicker(panel.symbol);
@@ -1770,7 +1777,12 @@
           const barTime = panel.resolveMarkerTime(timestamp);
           const contribution = isBuy ? contractCount : -contractCount;
           panel.netFlowByBarTime.set(barTime, (panel.netFlowByBarTime.get(barTime) || 0) + contribution);
-          panel.positionNetFlowLabels();
+          // Same O(n^2) reasoning as the setMarkers guard above -
+          // positionNetFlowLabels rebuilds the ENTIRE net-flow container's
+          // HTML from scratch every time it's called, so calling it once
+          // per event during a large Replay is the other half of what
+          // was freezing the tab.
+          if (!deferRender) panel.positionNetFlowLabels();
         }
 
         // Futures large-trades get their own, higher, separately-adjustable
@@ -1793,7 +1805,7 @@
         });
         if (!skipCap && panel.flowMarkers.length > CHART_MARKER_MAX) panel.flowMarkers.shift();
 
-        candlestickSeries.setMarkers(panel.flowMarkers);
+        if (!deferRender) candlestickSeries.setMarkers(panel.flowMarkers);
       };
 
       // Renders one label per candle that has qualifying futures flow,
@@ -2867,15 +2879,25 @@
 
           for (const event of data.events || []) {
             if (event.assetType === 'option') {
-              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, formatExpirationLabel(event.expiration), true);
+              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, formatExpirationLabel(event.expiration), true, true);
             } else {
               // 'stock' and 'futures' share the same marker/card shape -
               // size doubles as standardEquivalentSize for futures (see
               // addStockFlowMarker: it's only actually used for the
               // isFutures display branch, ignored otherwise).
-              panel.addStockFlowMarker(event.size, event.value, event.timeMs, event.side, event.sourceSymbol, event.size, true);
+              panel.addStockFlowMarker(event.size, event.value, event.timeMs, event.side, event.sourceSymbol, event.size, true, true);
             }
           }
+
+          // The loop above deferred both the chart-marker redraw and the
+          // net-flow label rebuild on every individual event (deferRender
+          // =true) specifically to avoid doing that expensive work once
+          // per event - with hundreds of saved events (very plausible now
+          // that the ES/NQ/GC background watch runs continuously), that
+          // was O(n^2) work that visibly froze the tab. Do each exactly
+          // once now that all the data is in place.
+          candlestickSeries.setMarkers(panel.flowMarkers);
+          panel.positionNetFlowLabels();
 
           if (!data.events || data.events.length === 0) {
             els.flowList.innerHTML = '<div style="padding: 8px; color: #8fa0be; font-size: 12px;">No saved flow for today yet</div>';
