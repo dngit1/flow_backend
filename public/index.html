@@ -3148,6 +3148,7 @@
       createPanel(0, 'SPY'),
       createPanel(1, 'QQQ'),
     ];
+    window.panels = panels; // top-level const doesn't attach to window automatically - this makes it reachable from DevTools console for testing/debugging (e.g. panels[0].stressTestOptionReplay(500))
 
     panels.forEach(async (p) => {
       await p.loadInitialSeedData(p.symbol);
