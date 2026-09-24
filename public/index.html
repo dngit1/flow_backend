@@ -3003,7 +3003,12 @@
 
           for (const event of data.events || []) {
             if (event.assetType === 'option') {
-              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, formatExpirationLabel(event.expiration), true, true);
+              // Saved option events are never genuinely Big Flow entries -
+              // tradierHub.js explicitly excludes those from history
+              // (recording both would duplicate every event) - so no
+              // expiration label here, unlike the live "ALL EXP" tag
+              // which is specific to that separate, unsaved feature.
+              panel.addOptionFlowMarker(event.optionType, event.strike, event.value, event.timeMs, event.side, null, true, true);
             } else {
               // 'stock' and 'futures' share the same marker/card shape -
               // size doubles as standardEquivalentSize for futures (see
