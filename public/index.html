@@ -3001,7 +3001,19 @@
           els.netFlowContainer.innerHTML = '';
           panel.pendingSidebarCards = [];
 
+          // resolveMarkerTime clamps anything older than the earliest
+          // loaded candle onto that SAME candle - fine for one or two
+          // live events arriving slightly early, but for a full day of
+          // saved history (especially futures, now that the permanent
+          // background watch accumulates flow across a much wider window
+          // than the loaded candle history covers) this stacks many
+          // events onto one spot, which is exactly the "all flow at one
+          // candle" bug reported. Skip anything that predates the loaded
+          // candle range entirely instead of clamping it somewhere wrong.
+          const earliestCandleMs = (panel.closeHistory && panel.closeHistory.length > 0) ? panel.closeHistory[0].time * 1000 : 0;
+
           for (const event of data.events || []) {
+            if (earliestCandleMs && event.timeMs < earliestCandleMs) continue;
             if (event.assetType === 'option') {
               // Saved option events are never genuinely Big Flow entries -
               // tradierHub.js explicitly excludes those from history
