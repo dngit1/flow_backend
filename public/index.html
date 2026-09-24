@@ -2936,6 +2936,28 @@
         console.log(`[stress-test] Rendered ${count} fake option events in ${elapsed.toFixed(0)}ms`);
       };
 
+      // TEMP DIAGNOSTIC: isolates the fetch+JSON-parse step alone (no
+      // rendering at all) - added because the rendering-only stress test
+      // above stayed fast even at 5000 fake events, pointing away from
+      // rendering as the freeze's cause. This measures the other half:
+      // the real network request and how large/slow it actually is.
+      // Call from console: panels[0].testFlowHistoryFetch()
+      // Remove once the freeze is resolved.
+      panel.testFlowHistoryFetch = async function () {
+        const symbol = panel.symbol;
+        console.log(`[fetch-test] Requesting /api/flow-history for ${symbol}...`);
+        const t0 = performance.now();
+        const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
+        const fetchDone = performance.now();
+        const text = await res.text(); // raw text first, so we can measure size before the (possibly slow) JSON.parse
+        const textDone = performance.now();
+        const data = JSON.parse(text);
+        const parseDone = performance.now();
+
+        console.log(`[fetch-test] ${symbol}: status=${res.status} responseSizeKB=${(text.length / 1024).toFixed(1)} eventCount=${data.events ? data.events.length : 'n/a'}`);
+        console.log(`[fetch-test] timing: network=${(fetchDone - t0).toFixed(0)}ms readText=${(textDone - fetchDone).toFixed(0)}ms JSONparse=${(parseDone - textDone).toFixed(0)}ms total=${(parseDone - t0).toFixed(0)}ms`);
+      };
+
       els.replayBtn.addEventListener('click', async () => {
         const symbol = panel.symbol;
         const originalLabel = els.replayBtn.innerText;
