@@ -11,7 +11,7 @@
       width: 100vw;
       height: 100vh;
       overflow: hidden;
-      background-color: #0b0e14;
+      background-color: #131722;
       color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
@@ -23,7 +23,7 @@
       align-items: center;
       gap: 12px;
       padding: 8px 12px;
-      background-color: #0b0e14;
+      background-color: #131722;
       border-bottom: 1px solid #1f293d;
       flex-shrink: 0;
       flex-wrap: wrap;
@@ -195,7 +195,7 @@
       align-items: center;
       gap: 12px;
       padding: 10px 12px;
-      background-color: #0b0e14;
+      background-color: #131722;
       border-bottom: 1px solid #1f293d;
       flex-shrink: 0;
       flex-wrap: wrap;
@@ -1432,7 +1432,7 @@
 
       const chart = LightweightCharts.createChart(els.chartContainer, {
         autoSize: true,
-        layout: { background: { color: '#0b0e14' }, textColor: '#d1d4dc', attributionLogo: false },
+        layout: { background: { color: '#131722' }, textColor: '#d1d4dc', attributionLogo: false },
         grid: { vertLines: { color: '#1f293d' }, horzLines: { color: '#1f293d' } },
         timeScale: {
           timeVisible: true,
@@ -2658,8 +2658,8 @@
       // red=resistance convention (S1/S2/R1/R2, GEX walls) rather than
       // the Pine script's own blue/yellow scheme - visual consistency
       // with the rest of this app over literal fidelity to the source.
-      const PIVOT_ZONE_BULL_BG = 'rgba(0, 200, 83, 0.12)';
-      const PIVOT_ZONE_BEAR_BG = 'rgba(255, 82, 82, 0.12)';
+      const PIVOT_ZONE_BULL_BG = 'rgba(0, 200, 83, 0.25)';
+      const PIVOT_ZONE_BEAR_BG = 'rgba(255, 82, 82, 0.25)';
 
       panel.positionPivotZones = function () {
         const height = els.chartContainer.clientHeight || 0;
