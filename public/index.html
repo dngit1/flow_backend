@@ -2035,10 +2035,18 @@
 
         const bars = panel.pivotZoneBars;
         const L = PIVOT_ZONE_LEFT, R = PIVOT_ZONE_RIGHT;
-        if (bars.length < L + R + 1 || panel.lastBarPrice == null) return;
+        // TEMP DIAGNOSTIC: reported "shows nothing" with no clear cause
+        // yet - logging the actual bar count and price at the point
+        // where this could silently bail out. Remove once resolved.
+        console.log(`[pivotzones:${panel.symbol}] compute called: bars=${bars.length} (need >${L + R}) lastBarPrice=${panel.lastBarPrice}`);
+        if (bars.length < L + R + 1 || panel.lastBarPrice == null) {
+          console.log(`[pivotzones:${panel.symbol}] bailing early - not enough bars or no price yet`);
+          return;
+        }
 
         const atrSeries = computeATRSeries(bars, PIVOT_ZONE_ATR_LEN);
         const atrByTime = new Map(atrSeries.map((p) => [p.time, p.value]));
+        console.log(`[pivotzones:${panel.symbol}] atrSeries points: ${atrSeries.length}`);
 
         const highPivots = []; // most recent PIVOT_ZONE_COUNT, oldest to newest
         const lowPivots = [];
@@ -2066,6 +2074,8 @@
           }
         }
 
+        console.log(`[pivotzones:${panel.symbol}] found highPivots=${highPivots.length} lowPivots=${lowPivots.length}`);
+
         const price = panel.lastBarPrice;
         for (const zone of [...highPivots, ...lowPivots]) {
           let isBull;
@@ -2074,6 +2084,7 @@
           else isBull = zone.originallyBull; // price still inside the zone - keep its original role
           panel.pivotZones.push({ top: zone.top, bottom: zone.bottom, startTime: zone.startTime, isBull, el: null });
         }
+        console.log(`[pivotzones:${panel.symbol}] final panel.pivotZones.length=${panel.pivotZones.length}`);
       };
 
       // Maintains panel.sr15mBars from live ticks, entirely independent of
@@ -2663,13 +2674,19 @@
 
           const topY = candlestickSeries.priceToCoordinate(zone.top);
           const bottomY = candlestickSeries.priceToCoordinate(zone.bottom);
-          const leftX = chart.timeScale().timeToCoordinate(zone.startTime);
+          const leftXRaw = chart.timeScale().timeToCoordinate(zone.startTime);
 
-          // Fully off-screen vertically, or hasn't scrolled into view yet
-          // (leftX null means its start time isn't in the visible range at
-          // all - lightweight-charts returns null rather than a
-          // far-off-screen number).
-          if (topY == null || bottomY == null || leftX == null || bottomY < 0 || topY > height) {
+          // A zone's startTime can be hours (even days) older than what's
+          // currently scrolled into view (pivotZoneBars spans up to ~50
+          // hours; the visible chart window is usually much shorter).
+          // timeToCoordinate returns null in that case - clamp to the
+          // chart's own left edge (0) instead of hiding the zone
+          // entirely, same reasoning as clamping topY/bottomY below.
+          // Confirmed as a real bug: this was the actual cause of zones
+          // never appearing at all.
+          const leftX = leftXRaw == null ? 0 : leftXRaw;
+
+          if (topY == null || bottomY == null || bottomY < 0 || topY > height) {
             zone.el.style.display = 'none';
             continue;
           }
@@ -2686,6 +2703,10 @@
           zone.el.style.width = `${width - Math.max(0, leftX)}px`;
           zone.el.style.backgroundColor = zone.isBull ? PIVOT_ZONE_BULL_BG : PIVOT_ZONE_BEAR_BG;
         }
+        // TEMP DIAGNOSTIC: confirms whether the leftX-clamp fix above
+        // actually resolves zones never appearing. Remove once resolved.
+        const visibleCount = panel.pivotZones.filter((z) => z.el && z.el.style.display === 'block').length;
+        console.log(`[pivotzones:${panel.symbol}] positioned: ${visibleCount}/${panel.pivotZones.length} visible`);
       };
 
       // Fetches and merges gamma x OI across the nearest
