@@ -751,6 +751,13 @@
       color: #00c853;
     }
 
+    .pivot-zone-box {
+      position: absolute;
+      pointer-events: none;
+      z-index: 8; /* below sr-label (14) and price/candles, above the plain chart background */
+      border-radius: 2px;
+    }
+
     .net-flow-label {
       position: absolute;
       transform: translate(-50%, -100%);
@@ -864,6 +871,10 @@
             Support/Resistance
           </label>
           <label class="sr-toggle-row">
+            <input type="checkbox" class="pivot-zone-toggle-checkbox" />
+            Pivot Zones (new)
+          </label>
+          <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
           </label>
@@ -925,6 +936,7 @@
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
+        <div class="pivot-zone-container"></div>
         <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
@@ -955,6 +967,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="sr-toggle-checkbox" checked />
             Support/Resistance
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="pivot-zone-toggle-checkbox" />
+            Pivot Zones (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1018,6 +1034,7 @@
         <div class="wall-label low-area-label" style="display:none;"></div>
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
+        <div class="pivot-zone-container"></div>
         <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
@@ -1056,6 +1073,21 @@
     const SR_FRACTAL_N = 3; // a bar's high/low must beat N neighbors on EACH side to count as a swing point - higher N = fewer, more significant swings
     const SR_CLUSTER_TOLERANCE_PCT = 0.0015; // swing points within 0.15% of each other's price get grouped into the same level
     const SR_LEVELS_PER_SIDE = 2; // how many resistance/support lines to draw above/below current price
+
+    // Pivot Zones - ported from the "XNL Levels and Trendlines" Pine
+    // script. Reuses the same sr15mBars series as the existing S/R
+    // feature (fractal pivots need full OHLC, which panel.closeHistory
+    // doesn't carry - only {time, close} - and building a second,
+    // live-updating full-OHLC series matching the chart's own displayed
+    // timeframe would be meaningfully more work/risk than reusing data
+    // already being fetched and maintained for S/R).
+    const PIVOT_ZONE_LEFT = 20; // bars to the left a pivot must beat (Pine's "left")
+    const PIVOT_ZONE_RIGHT = 15; // bars to the right (Pine's "right") - also how many bars back a pivot's OWN bar sits, once confirmed
+    const PIVOT_ZONE_COUNT = 4; // most recent pivots to track per side (Pine's "nPiv")
+    const PIVOT_ZONE_ATR_LEN = 30; // Pine's "atrLen"
+    const PIVOT_ZONE_ATR_MULT = 0.5; // Pine's "mult" - band half-width = min(ATR*mult, price*maxPct) / 2
+    const PIVOT_ZONE_MAX_PCT = 0.05; // Pine's "per" (5%)
+    const PIVOT_ZONE_LOOKBACK_BARS = 200; // sr15mBars' 52-bar cap is barely enough for ONE pivot (needs left+right+1=36 bars minimum) - nowhere near enough room to find 4 recent pivots per side. Separate fetch/array from sr15mBars entirely, so this can't affect the existing S/R feature at all.
 
     // GEX walls/flip aggregate gamma x OI across the nearest N
     // expirations, not just whichever one is selected in the EXP dropdown
@@ -1127,6 +1159,7 @@
           symbol: panel.symbol,
           interval: panel.interval,
           srEnabled: panel.srEnabled,
+          pivotZonesEnabled: panel.pivotZonesEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
           macdEnabled: panel.macdEnabled,
@@ -1256,7 +1289,33 @@
       return points;
     }
 
-    // Standard MACD: MACD line = EMA(fast) - EMA(slow) of close price,
+    // Wilder's ATR (RMA-smoothed True Range) - matches Pine's ta.atr().
+    // Returns one ATR value per bar, aligned with bars[period] onward
+    // (needs `period` bars of True Range before the first RMA value
+    // exists), same alignment convention as computeRSI above.
+    function computeATRSeries(bars, period) {
+      if (bars.length <= period) return [];
+      const trueRanges = [];
+      for (let i = 1; i < bars.length; i++) {
+        const highLow = bars[i].high - bars[i].low;
+        const highPrevClose = Math.abs(bars[i].high - bars[i - 1].close);
+        const lowPrevClose = Math.abs(bars[i].low - bars[i - 1].close);
+        trueRanges.push(Math.max(highLow, highPrevClose, lowPrevClose));
+      }
+      // trueRanges[k] corresponds to bars[k+1] (it needs bars[i-1]) - so
+      // trueRanges[0..period-1] are the first `period` values, aligned
+      // with bars[1..period].
+      let sum = 0;
+      for (let i = 0; i < period; i++) sum += trueRanges[i];
+      let atr = sum / period;
+      const points = [{ time: bars[period].time, value: atr }];
+      for (let i = period; i < trueRanges.length; i++) {
+        atr = (atr * (period - 1) + trueRanges[i]) / period;
+        points.push({ time: bars[i + 1].time, value: atr });
+      }
+      return points;
+    }
+
     // signal = EMA(signal) of the MACD line itself, histogram = MACD
     // line minus signal. Needs slowPeriod + signalPeriod bars just to
     // produce the first histogram point, same "starts partway into the
@@ -1312,6 +1371,7 @@
       const initialSymbol = saved?.symbol || defaultSymbol;
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
+      const initialPivotZonesEnabled = saved?.pivotZonesEnabled === true; // default OFF - new feature, being introduced alongside the existing S/R rather than replacing it yet
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
@@ -1332,6 +1392,7 @@
         flowList: root.querySelector('.flow-list'),
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         srLabelContainer: root.querySelector('.sr-label-container'),
+        pivotZoneContainer: root.querySelector('.pivot-zone-container'),
         netFlowContainer: root.querySelector('.net-flow-container'),
         candleTimer: root.querySelector('.candle-timer'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
@@ -1341,6 +1402,7 @@
         indicatorStyleSelect: root.querySelector('.indicator-style-select'),
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
+        pivotZoneToggleCheckbox: root.querySelector('.pivot-zone-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
         flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
@@ -1362,6 +1424,7 @@
       els.tickerInput.value = initialSymbol;
       els.timeframeSelect.value = initialInterval;
       els.srToggleCheckbox.checked = initialSrEnabled;
+      els.pivotZoneToggleCheckbox.checked = initialPivotZonesEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
       els.macdToggleCheckbox.checked = initialMacdEnabled;
@@ -1461,6 +1524,9 @@
         sr15mBarLow: 0,
         srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
+        pivotZoneBars: [], // separate {time, open, high, low, close} series from sr15mBars - see PIVOT_ZONE_LOOKBACK_BARS
+        pivotZones: [], // {top, bottom, isBull, startTime, el} - the actual rendered zones
+        pivotZonesEnabled: initialPivotZonesEnabled,
         volumeProfileEnabled: initialVolumeProfileEnabled,
         gexEnabled: initialGexEnabled,
         macdEnabled: initialMacdEnabled,
@@ -1931,6 +1997,85 @@
         }
       };
 
+      // Separate fetch from fetchSr15mBars above - same 15m interval, but
+      // a much larger lookback (PIVOT_ZONE_LOOKBACK_BARS=200 vs 52),
+      // since pivot zones need enough room to find PIVOT_ZONE_COUNT (4)
+      // recent pivots per side, each requiring a full left+right window
+      // just to be detected at all. Kept independent so this feature
+      // can never affect the existing S/R feature's data.
+      panel.fetchPivotZoneBars = async function (symbol) {
+        try {
+          const result = await fetchHistoricalBars(symbol, SR_INTERVAL);
+          const bars = (result.bars || []).slice(-PIVOT_ZONE_LOOKBACK_BARS);
+          panel.pivotZoneBars = bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }));
+        } catch (err) {
+          console.error(`[pivotzones:${symbol}] failed to load bar history:`, err);
+          panel.pivotZoneBars = [];
+        }
+      };
+
+      // Ported from the Pine script's pivot zone logic. Simplified in one
+      // way: instead of tracking each zone's flip history bar-by-bar as
+      // price moves through it over time, this checks each zone against
+      // the CURRENT price only - if price is now above a zone's top, it
+      // reads as support (green); below a zone's bottom, resistance
+      // (red); still inside it, keeps its original role. Same practical
+      // outcome (a zone's color reflects its current role relative to
+      // price) with meaningfully less complexity for this first version.
+      panel.computePivotZones = function () {
+        // Clear the actual rendered DOM elements too, not just the array -
+        // without this, every recompute (including every 15m-bar-close
+        // triggered by live ticks) would orphan the previous call's boxes
+        // in the DOM instead of replacing them, leaking elements
+        // unboundedly over a session. Same pattern computeAndDrawSupportResistance
+        // already uses for srLabelContainer.
+        els.pivotZoneContainer.innerHTML = '';
+        panel.pivotZones = [];
+        if (!panel.pivotZonesEnabled) return;
+
+        const bars = panel.pivotZoneBars;
+        const L = PIVOT_ZONE_LEFT, R = PIVOT_ZONE_RIGHT;
+        if (bars.length < L + R + 1 || panel.lastBarPrice == null) return;
+
+        const atrSeries = computeATRSeries(bars, PIVOT_ZONE_ATR_LEN);
+        const atrByTime = new Map(atrSeries.map((p) => [p.time, p.value]));
+
+        const highPivots = []; // most recent PIVOT_ZONE_COUNT, oldest to newest
+        const lowPivots = [];
+
+        for (let i = L; i < bars.length - R; i++) {
+          const atr = atrByTime.get(bars[i].time);
+          if (atr == null) continue; // before ATR has enough data yet
+
+          let isHigh = true, isLow = true;
+          for (let j = i - L; j <= i + R; j++) {
+            if (j === i) continue;
+            if (bars[j].high > bars[i].high) isHigh = false;
+            if (bars[j].low < bars[i].low) isLow = false;
+          }
+
+          const band = Math.min(atr * PIVOT_ZONE_ATR_MULT, bars[i].close * PIVOT_ZONE_MAX_PCT) / 2;
+
+          if (isHigh) {
+            highPivots.push({ top: bars[i].high + band, bottom: bars[i].high - band, startTime: bars[i].time, originallyBull: false });
+            if (highPivots.length > PIVOT_ZONE_COUNT) highPivots.shift();
+          }
+          if (isLow) {
+            lowPivots.push({ top: bars[i].low + band, bottom: bars[i].low - band, startTime: bars[i].time, originallyBull: true });
+            if (lowPivots.length > PIVOT_ZONE_COUNT) lowPivots.shift();
+          }
+        }
+
+        const price = panel.lastBarPrice;
+        for (const zone of [...highPivots, ...lowPivots]) {
+          let isBull;
+          if (price > zone.top) isBull = true; // price moved above - now reads as support
+          else if (price < zone.bottom) isBull = false; // price moved below - now reads as resistance
+          else isBull = zone.originallyBull; // price still inside the zone - keep its original role
+          panel.pivotZones.push({ top: zone.top, bottom: zone.bottom, startTime: zone.startTime, isBull, el: null });
+        }
+      };
+
       // Maintains panel.sr15mBars from live ticks, entirely independent of
       // the displayed chart's timeframe/bucket - this is what keeps S/R
       // levels stable across TF switches instead of jumping around. Only
@@ -1952,6 +2097,15 @@
           panel.sr15mBars.push({ time: bucket, open: tradePrice, high, low, close: tradePrice });
           if (panel.sr15mBars.length > SR_LOOKBACK_BARS) panel.sr15mBars.shift();
           panel.computeAndDrawSupportResistance();
+
+          // Same bucket, same values - pivotZoneBars is just a longer-
+          // lookback twin of sr15mBars above, not independently tracked.
+          if (panel.pivotZonesEnabled) {
+            panel.pivotZoneBars.push({ time: bucket, open: tradePrice, high, low, close: tradePrice });
+            if (panel.pivotZoneBars.length > PIVOT_ZONE_LOOKBACK_BARS) panel.pivotZoneBars.shift();
+            panel.computePivotZones();
+            panel.positionPivotZones();
+          }
         } else {
           panel.sr15mBarHigh = Math.max(panel.sr15mBarHigh, high);
           panel.sr15mBarLow = Math.min(panel.sr15mBarLow, low);
@@ -1960,6 +2114,15 @@
             last.high = panel.sr15mBarHigh;
             last.low = panel.sr15mBarLow;
             last.close = tradePrice;
+          }
+
+          if (panel.pivotZonesEnabled) {
+            const lastPZ = panel.pivotZoneBars[panel.pivotZoneBars.length - 1];
+            if (lastPZ) {
+              lastPZ.high = panel.sr15mBarHigh;
+              lastPZ.low = panel.sr15mBarLow;
+              lastPZ.close = tradePrice;
+            }
           }
         }
       };
@@ -2085,6 +2248,7 @@
         panel.positionGexOverlay();
         panel.positionCandleTimer();
         panel.positionSRLabels();
+        panel.positionPivotZones();
         panel.positionNetFlowLabels();
       };
 
@@ -2459,6 +2623,7 @@
         });
 
         panel.positionSRLabels();
+        panel.positionPivotZones();
       };
 
       // Repositions the floating R1/R2/S1/S2 labels to sit right on top of
@@ -2475,6 +2640,51 @@
           } else {
             level.el.style.display = 'none'; // off-screen (scrolled/zoomed away)
           }
+        }
+      };
+
+      // Colors deliberately match the app's own existing green=support /
+      // red=resistance convention (S1/S2/R1/R2, GEX walls) rather than
+      // the Pine script's own blue/yellow scheme - visual consistency
+      // with the rest of this app over literal fidelity to the source.
+      const PIVOT_ZONE_BULL_BG = 'rgba(0, 200, 83, 0.12)';
+      const PIVOT_ZONE_BEAR_BG = 'rgba(255, 82, 82, 0.12)';
+
+      panel.positionPivotZones = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+
+        for (const zone of panel.pivotZones) {
+          if (!zone.el) {
+            zone.el = document.createElement('div');
+            zone.el.className = 'pivot-zone-box';
+            els.pivotZoneContainer.appendChild(zone.el);
+          }
+
+          const topY = candlestickSeries.priceToCoordinate(zone.top);
+          const bottomY = candlestickSeries.priceToCoordinate(zone.bottom);
+          const leftX = chart.timeScale().timeToCoordinate(zone.startTime);
+
+          // Fully off-screen vertically, or hasn't scrolled into view yet
+          // (leftX null means its start time isn't in the visible range at
+          // all - lightweight-charts returns null rather than a
+          // far-off-screen number).
+          if (topY == null || bottomY == null || leftX == null || bottomY < 0 || topY > height) {
+            zone.el.style.display = 'none';
+            continue;
+          }
+
+          zone.el.style.display = 'block';
+          zone.el.style.top = `${Math.max(0, topY)}px`;
+          zone.el.style.height = `${Math.min(height, bottomY) - Math.max(0, topY)}px`;
+          zone.el.style.left = `${Math.max(0, leftX)}px`;
+          // Extends to the visible right edge rather than stopping at the
+          // pivot's own confirmation bar (which the Pine script does,
+          // via extend=false) - a S/R-replacement zone that's still
+          // relevant should visually reach the present, matching how the
+          // existing S1/S2/R1/R2 lines already span the full chart width.
+          zone.el.style.width = `${width - Math.max(0, leftX)}px`;
+          zone.el.style.backgroundColor = zone.isBull ? PIVOT_ZONE_BULL_BG : PIVOT_ZONE_BEAR_BG;
         }
       };
 
@@ -2718,6 +2928,7 @@
           panel.positionGexOverlay();
           panel.positionCandleTimer();
           panel.positionSRLabels();
+          panel.positionPivotZones();
           panel.positionNetFlowLabels();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
@@ -2860,6 +3071,15 @@
         panel.positionCandleTimer();
         await panel.fetchSr15mBars(symbol);
         panel.computeAndDrawSupportResistance();
+        // Only fetch/compute if this panel's saved settings had the
+        // toggle already on - same lazy-load intent as the checkbox
+        // listener, just covering the "was already enabled last
+        // session" case instead of "just turned on".
+        if (panel.pivotZonesEnabled) {
+          await panel.fetchPivotZoneBars(symbol);
+          panel.computePivotZones();
+          panel.positionPivotZones();
+        }
         panel.positionNetFlowLabels();
         panel.hasLoadedOnce = true;
         // TEMPORARY: Replay confirmed freezing the tab for stock tickers
@@ -3160,6 +3380,22 @@
         saveChartSettings(panel);
       });
 
+      els.pivotZoneToggleCheckbox.addEventListener('change', async () => {
+        panel.pivotZonesEnabled = els.pivotZoneToggleCheckbox.checked;
+        // Lazy-fetch: this feature defaults off, so most panels never
+        // need pivotZoneBars at all - only fetch the first time someone
+        // actually turns it on, not on every panel load regardless of
+        // use.
+        if (panel.pivotZonesEnabled && panel.pivotZoneBars.length === 0) {
+          await panel.fetchPivotZoneBars(panel.symbol);
+        }
+        // computePivotZones clears pivotZoneContainer itself now, so no
+        // need to do it here too.
+        panel.computePivotZones();
+        panel.positionPivotZones();
+        saveChartSettings(panel);
+      });
+
       els.volumeProfileToggleCheckbox.addEventListener('change', () => {
         panel.volumeProfileEnabled = els.volumeProfileToggleCheckbox.checked;
         panel.positionStrikeOverlay();
@@ -3241,6 +3477,7 @@
         panel.positionGexOverlay();
         panel.positionCandleTimer();
         panel.positionSRLabels();
+        panel.positionPivotZones();
         panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
       });
@@ -3256,7 +3493,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
