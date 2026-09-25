@@ -1087,7 +1087,6 @@
     const PIVOT_ZONE_ATR_LEN = 30; // Pine's "atrLen"
     const PIVOT_ZONE_ATR_MULT = 0.5; // Pine's "mult" - band half-width = min(ATR*mult, price*maxPct) / 2
     const PIVOT_ZONE_MAX_PCT = 0.05; // Pine's "per" (5%)
-    const PIVOT_ZONE_LOOKBACK_BARS = 200; // sr15mBars' 52-bar cap is barely enough for ONE pivot (needs left+right+1=36 bars minimum) - nowhere near enough room to find 4 recent pivots per side. Separate fetch/array from sr15mBars entirely, so this can't affect the existing S/R feature at all.
 
     // GEX walls/flip aggregate gamma x OI across the nearest N
     // expirations, not just whichever one is selected in the EXP dropdown
@@ -1524,7 +1523,6 @@
         sr15mBarLow: 0,
         srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
-        pivotZoneBars: [], // separate {time, open, high, low, close} series from sr15mBars - see PIVOT_ZONE_LOOKBACK_BARS
         pivotZones: [], // {top, bottom, isBull, startTime, el} - the actual rendered zones
         pivotZonesEnabled: initialPivotZonesEnabled,
         volumeProfileEnabled: initialVolumeProfileEnabled,
@@ -1997,23 +1995,6 @@
         }
       };
 
-      // Separate fetch from fetchSr15mBars above - same 15m interval, but
-      // a much larger lookback (PIVOT_ZONE_LOOKBACK_BARS=200 vs 52),
-      // since pivot zones need enough room to find PIVOT_ZONE_COUNT (4)
-      // recent pivots per side, each requiring a full left+right window
-      // just to be detected at all. Kept independent so this feature
-      // can never affect the existing S/R feature's data.
-      panel.fetchPivotZoneBars = async function (symbol) {
-        try {
-          const result = await fetchHistoricalBars(symbol, SR_INTERVAL);
-          const bars = (result.bars || []).slice(-PIVOT_ZONE_LOOKBACK_BARS);
-          panel.pivotZoneBars = bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }));
-        } catch (err) {
-          console.error(`[pivotzones:${symbol}] failed to load bar history:`, err);
-          panel.pivotZoneBars = [];
-        }
-      };
-
       // Ported from the Pine script's pivot zone logic. Simplified in one
       // way: instead of tracking each zone's flip history bar-by-bar as
       // price moves through it over time, this checks each zone against
@@ -2033,12 +2014,15 @@
         panel.pivotZones = [];
         if (!panel.pivotZonesEnabled) return;
 
-        const bars = panel.pivotZoneBars;
+        // Reads the chart's own live data directly, at whatever timeframe
+        // is currently selected (1m/5m/15m/etc) - unlike the existing S/R
+        // feature, which is deliberately fixed to 15m regardless of the
+        // chart's own TF. candlestickSeries.data() returns exactly what's
+        // driving the visible candles, always current, so there's no
+        // separate fetch or parallel live-tracking array to maintain.
+        const bars = candlestickSeries.data();
         const L = PIVOT_ZONE_LEFT, R = PIVOT_ZONE_RIGHT;
-        // TEMP DIAGNOSTIC: reported "shows nothing" with no clear cause
-        // yet - logging the actual bar count and price at the point
-        // where this could silently bail out. Remove once resolved.
-        console.log(`[pivotzones:${panel.symbol}] compute called: bars=${bars.length} (need >${L + R}) lastBarPrice=${panel.lastBarPrice}`);
+        console.log(`[pivotzones:${panel.symbol}] compute called: bars=${bars.length} (need >${L + R}) lastBarPrice=${panel.lastBarPrice} tf=${panel.interval}`);
         if (bars.length < L + R + 1 || panel.lastBarPrice == null) {
           console.log(`[pivotzones:${panel.symbol}] bailing early - not enough bars or no price yet`);
           return;
@@ -2108,15 +2092,6 @@
           panel.sr15mBars.push({ time: bucket, open: tradePrice, high, low, close: tradePrice });
           if (panel.sr15mBars.length > SR_LOOKBACK_BARS) panel.sr15mBars.shift();
           panel.computeAndDrawSupportResistance();
-
-          // Same bucket, same values - pivotZoneBars is just a longer-
-          // lookback twin of sr15mBars above, not independently tracked.
-          if (panel.pivotZonesEnabled) {
-            panel.pivotZoneBars.push({ time: bucket, open: tradePrice, high, low, close: tradePrice });
-            if (panel.pivotZoneBars.length > PIVOT_ZONE_LOOKBACK_BARS) panel.pivotZoneBars.shift();
-            panel.computePivotZones();
-            panel.positionPivotZones();
-          }
         } else {
           panel.sr15mBarHigh = Math.max(panel.sr15mBarHigh, high);
           panel.sr15mBarLow = Math.min(panel.sr15mBarLow, low);
@@ -2125,15 +2100,6 @@
             last.high = panel.sr15mBarHigh;
             last.low = panel.sr15mBarLow;
             last.close = tradePrice;
-          }
-
-          if (panel.pivotZonesEnabled) {
-            const lastPZ = panel.pivotZoneBars[panel.pivotZoneBars.length - 1];
-            if (lastPZ) {
-              lastPZ.high = panel.sr15mBarHigh;
-              lastPZ.low = panel.sr15mBarLow;
-              lastPZ.close = tradePrice;
-            }
           }
         }
       };
@@ -2199,6 +2165,10 @@
             color: tradePrice >= panel.lastBarOpen ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
           });
           panel.closeHistory.push({ time: currentMinuteBucket, close: tradePrice });
+          if (panel.pivotZonesEnabled) {
+            panel.computePivotZones();
+            panel.positionPivotZones();
+          }
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
           // seen so far - comparing only the last two ticks (the
@@ -2676,9 +2646,11 @@
           const bottomY = candlestickSeries.priceToCoordinate(zone.bottom);
           const leftXRaw = chart.timeScale().timeToCoordinate(zone.startTime);
 
-          // A zone's startTime can be hours (even days) older than what's
-          // currently scrolled into view (pivotZoneBars spans up to ~50
-          // hours; the visible chart window is usually much shorter).
+          // A zone's startTime can be older than what's currently
+          // scrolled into view - candlestickSeries.data() spans the
+          // chart's whole loaded history (up to ~260 bars, however far
+          // back that reaches at the current TF), while the visible
+          // window after scrolling/zooming is often shorter.
           // timeToCoordinate returns null in that case - clamp to the
           // chart's own left edge (0) instead of hiding the zone
           // entirely, same reasoning as clamping topY/bottomY below.
@@ -3092,12 +3064,10 @@
         panel.positionCandleTimer();
         await panel.fetchSr15mBars(symbol);
         panel.computeAndDrawSupportResistance();
-        // Only fetch/compute if this panel's saved settings had the
-        // toggle already on - same lazy-load intent as the checkbox
-        // listener, just covering the "was already enabled last
-        // session" case instead of "just turned on".
+        // candlestickSeries already has seedCandles loaded by this point
+        // (set earlier in this same load sequence) - computePivotZones
+        // reads directly from it, no separate fetch needed.
         if (panel.pivotZonesEnabled) {
-          await panel.fetchPivotZoneBars(symbol);
           panel.computePivotZones();
           panel.positionPivotZones();
         }
@@ -3401,17 +3371,8 @@
         saveChartSettings(panel);
       });
 
-      els.pivotZoneToggleCheckbox.addEventListener('change', async () => {
+      els.pivotZoneToggleCheckbox.addEventListener('change', () => {
         panel.pivotZonesEnabled = els.pivotZoneToggleCheckbox.checked;
-        // Lazy-fetch: this feature defaults off, so most panels never
-        // need pivotZoneBars at all - only fetch the first time someone
-        // actually turns it on, not on every panel load regardless of
-        // use.
-        if (panel.pivotZonesEnabled && panel.pivotZoneBars.length === 0) {
-          await panel.fetchPivotZoneBars(panel.symbol);
-        }
-        // computePivotZones clears pivotZoneContainer itself now, so no
-        // need to do it here too.
         panel.computePivotZones();
         panel.positionPivotZones();
         saveChartSettings(panel);
