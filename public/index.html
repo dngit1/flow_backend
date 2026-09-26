@@ -758,6 +758,59 @@
       border-radius: 2px;
     }
 
+    .gmacd-band-box {
+      position: absolute;
+      pointer-events: none;
+      z-index: 7; /* below pivot zones (8) - GMACD is the broader, coarser band of the two */
+      display: none;
+      background-color: rgba(255, 152, 0, 0.15); /* orange, matching the Pine script's own g_color */
+    }
+
+    .trendline-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 9; /* above pivot zones/GMACD (7-8) - these are lines, not fill areas, meant to stay visible over them */
+    }
+
+    .trendline-upper, .trendline-lower {
+      stroke-width: 2;
+      stroke-dasharray: 5, 4;
+      display: none;
+    }
+
+    .trendline-upper {
+      stroke: #ff5252; /* descends from pivot highs - resistance-like, matching the app's existing red convention */
+    }
+
+    .trendline-lower {
+      stroke: #00c853; /* ascends from pivot lows - support-like, matching the app's existing green convention */
+    }
+
+    .adaptive-mid, .adaptive-upper, .adaptive-lower {
+      stroke-width: 1.5;
+      display: none;
+      fill: none;
+    }
+
+    .adaptive-mid {
+      stroke: #ffffff;
+      stroke-opacity: 0.6;
+    }
+
+    .adaptive-upper, .adaptive-lower {
+      stroke: #ba68c8; /* matches this app's other purple-ish secondary-indicator color (RSI) */
+      stroke-opacity: 0.4;
+    }
+
+    .adaptive-fill-upper, .adaptive-fill-lower {
+      display: none;
+      fill: rgba(186, 104, 200, 0.08);
+    }
+
     .net-flow-label {
       position: absolute;
       transform: translate(-50%, -100%);
@@ -875,6 +928,18 @@
             Pivot Zones (new)
           </label>
           <label class="sr-toggle-row">
+            <input type="checkbox" class="gmacd-toggle-checkbox" />
+            GMACD S/R Area (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="trendline-toggle-checkbox" />
+            Sloped Trendlines (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="adaptive-toggle-checkbox" />
+            Adaptive Trend Finder (new)
+          </label>
+          <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
           </label>
@@ -937,6 +1002,16 @@
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="pivot-zone-container"></div>
+        <div class="gmacd-band-box"></div>
+        <svg class="trendline-svg">
+          <polygon class="adaptive-fill-upper" />
+          <polygon class="adaptive-fill-lower" />
+          <line class="adaptive-mid" />
+          <line class="adaptive-upper" />
+          <line class="adaptive-lower" />
+          <line class="trendline-upper" />
+          <line class="trendline-lower" />
+        </svg>
         <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
@@ -971,6 +1046,18 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="pivot-zone-toggle-checkbox" />
             Pivot Zones (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="gmacd-toggle-checkbox" />
+            GMACD S/R Area (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="trendline-toggle-checkbox" />
+            Sloped Trendlines (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="adaptive-toggle-checkbox" />
+            Adaptive Trend Finder (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1035,6 +1122,16 @@
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="pivot-zone-container"></div>
+        <div class="gmacd-band-box"></div>
+        <svg class="trendline-svg">
+          <polygon class="adaptive-fill-upper" />
+          <polygon class="adaptive-fill-lower" />
+          <line class="adaptive-mid" />
+          <line class="adaptive-upper" />
+          <line class="adaptive-lower" />
+          <line class="trendline-upper" />
+          <line class="trendline-lower" />
+        </svg>
         <div class="net-flow-container"></div>
       </div>
       <div class="flow-panel">
@@ -1087,6 +1184,41 @@
     const PIVOT_ZONE_ATR_LEN = 30; // Pine's "atrLen"
     const PIVOT_ZONE_ATR_MULT = 0.5; // Pine's "mult" - band half-width = min(ATR*mult, price*maxPct) / 2
     const PIVOT_ZONE_MAX_PCT = 0.05; // Pine's "per" (5%)
+
+    // GMACD support/resistance shading - ported from the same Pine
+    // script's GMACD section, with one deliberate simplification: the
+    // original uses valuewhen(..., 1) to grab the SECOND-most-recent
+    // qualifying MACD-crossing event, then smooths that over a 50-bar
+    // SMA - a chain that could need hundreds of bars of history (50
+    // bars just to start, then 50 separate crossing EVENTS, which fire
+    // unpredictably depending on volatility) before ever producing a
+    // value. Using the smoothed rolling extreme (higher/lower) directly
+    // as the threshold instead preserves the same core idea - MACD
+    // breaking above/below its own recent smoothed extreme - while only
+    // needing ~50 bars of raw data, comfortably within a normal chart
+    // load.
+    const GMACD_FAST = 3;
+    const GMACD_SLOW = 10;
+    const GMACD_EXTREME_LEN = 20; // Pine's "Highest"/"Lowest"
+
+    // Sloped trendlines ("Trend Line With Break") - unlike Pivot Zones
+    // and GMACD (both axis-aligned rectangles, rendered as positioned
+    // DOM divs), a DIAGONAL line has no equivalent lightweight-charts
+    // primitive - rendered as an SVG line overlay instead.
+    const TRENDLINE_LENGTH = 14; // Pine's "length" - fractal pivot window AND the ATR period for slope
+    const TRENDLINE_SLOPE_MULT = 1.0; // Pine's "mult_t"
+
+    // Adaptive Trend Finder - tests 19 lookback lengths, picks whichever
+    // linear regression (on log price) has the strongest Pearson
+    // correlation, then draws a channel using that best-fit length.
+    // Short-term mode (periodMode=false in the script) rather than the
+    // config's actual long-term mode (300-1200 bars) - that would need
+    // meaningfully more chart history than a normal load provides, the
+    // same class of problem the futures Replay freeze came from earlier.
+    // This is the script's own alternate official setting, not a
+    // simplification - just tuned toward more recent trends.
+    const ADAPTIVE_TREND_PERIODS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+    const ADAPTIVE_TREND_DEV_MULT = 2.0; // Pine's "devMultiplier"
 
     // GEX walls/flip aggregate gamma x OI across the nearest N
     // expirations, not just whichever one is selected in the EXP dropdown
@@ -1159,6 +1291,9 @@
           interval: panel.interval,
           srEnabled: panel.srEnabled,
           pivotZonesEnabled: panel.pivotZonesEnabled,
+          gmacdEnabled: panel.gmacdEnabled,
+          trendlinesEnabled: panel.trendlinesEnabled,
+          adaptiveTrendEnabled: panel.adaptiveTrendEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
           macdEnabled: panel.macdEnabled,
@@ -1315,6 +1450,87 @@
       return points;
     }
 
+    // Index-aligned with `values` (same length, null until enough data) -
+    // simpler to compose with other index-aligned series (like GMACD's
+    // chain below) than the "returns a shorter array" style
+    // computeATRSeries/computeRSI use, since GMACD needs to look several
+    // calculations deep at the SAME bar index each time.
+    function smaSeries(values, period) {
+      const out = new Array(values.length).fill(null);
+      let sum = 0;
+      const window = [];
+      for (let i = 0; i < values.length; i++) {
+        if (values[i] == null) { window.length = 0; sum = 0; continue; }
+        window.push(values[i]);
+        sum += values[i];
+        if (window.length > period) sum -= window.shift();
+        if (window.length === period) out[i] = sum / period;
+      }
+      return out;
+    }
+
+    // Rolling max (isMax=true) or min (isMax=false) of `values` over the
+    // trailing `period` bars, index-aligned, null until a full window of
+    // non-null values is available.
+    function rollingExtremeSeries(values, period, isMax) {
+      const out = new Array(values.length).fill(null);
+      const window = [];
+      for (let i = 0; i < values.length; i++) {
+        if (values[i] == null) { window.length = 0; out[i] = null; continue; }
+        window.push(values[i]);
+        if (window.length > period) window.shift();
+        if (window.length === period) out[i] = isMax ? Math.max(...window) : Math.min(...window);
+      }
+      return out;
+    }
+
+    // Faithful translation of the Pine script's calcDev function -
+    // linear regression of log(close) over the most recent `length`
+    // bars, plus the resulting standard deviation and Pearson's R.
+    // `bars` is the full array, most recent LAST (matching
+    // candlestickSeries.data()'s own order) - logSource(k) below maps
+    // Pine's logSource[k] ("k bars before the latest") onto that array.
+    // Returns null if there aren't enough bars for this length yet.
+    function calcDev(bars, length) {
+      const n = bars.length;
+      if (n < length) return null;
+      const logSource = (k) => Math.log(bars[n - 1 - k].close);
+
+      let sumX = 0, sumXX = 0, sumYX = 0, sumY = 0;
+      for (let i = 1; i <= length; i++) {
+        const lSrc = logSource(i - 1);
+        sumX += i;
+        sumXX += i * i;
+        sumYX += i * lSrc;
+        sumY += lSrc;
+      }
+      const denom = length * sumXX - sumX * sumX;
+      const slope = denom !== 0 ? (length * sumYX - sumX * sumY) / denom : 0;
+      const average = sumY / length;
+      const intercept = average - (slope * sumX / length) + slope;
+
+      const period_1 = length - 1;
+      let sumDev = 0, sumDxx = 0, sumDyy = 0, sumDyx = 0;
+      const regres = intercept + slope * period_1 * 0.5;
+      let sumSlp = intercept;
+      for (let i = 0; i <= period_1; i++) {
+        let lSrc = logSource(i);
+        const dxt = lSrc - average;
+        const dyt = sumSlp - regres;
+        lSrc -= sumSlp;
+        sumSlp += slope;
+        sumDxx += dxt * dxt;
+        sumDyy += dyt * dyt;
+        sumDyx += dxt * dyt;
+        sumDev += lSrc * lSrc;
+      }
+      const stdDev = Math.sqrt(sumDev / period_1);
+      const divisor = sumDxx * sumDyy;
+      const pearsonR = divisor !== 0 ? (sumDyx / Math.sqrt(divisor)) : 0;
+
+      return { stdDev, pearsonR, slope, intercept };
+    }
+
     // signal = EMA(signal) of the MACD line itself, histogram = MACD
     // line minus signal. Needs slowPeriod + signalPeriod bars just to
     // produce the first histogram point, same "starts partway into the
@@ -1371,6 +1587,9 @@
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const initialPivotZonesEnabled = saved?.pivotZonesEnabled === true; // default OFF - new feature, being introduced alongside the existing S/R rather than replacing it yet
+      const initialGmacdEnabled = saved?.gmacdEnabled === true; // default OFF - same reasoning as pivot zones
+      const initialTrendlinesEnabled = saved?.trendlinesEnabled === true; // default OFF - same reasoning
+      const initialAdaptiveTrendEnabled = saved?.adaptiveTrendEnabled === true; // default OFF - same reasoning
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
@@ -1392,6 +1611,14 @@
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         srLabelContainer: root.querySelector('.sr-label-container'),
         pivotZoneContainer: root.querySelector('.pivot-zone-container'),
+        gmacdBandEl: root.querySelector('.gmacd-band-box'),
+        trendlineUpperEl: root.querySelector('.trendline-upper'),
+        trendlineLowerEl: root.querySelector('.trendline-lower'),
+        adaptiveMidEl: root.querySelector('.adaptive-mid'),
+        adaptiveUpperEl: root.querySelector('.adaptive-upper'),
+        adaptiveLowerEl: root.querySelector('.adaptive-lower'),
+        adaptiveFillUpperEl: root.querySelector('.adaptive-fill-upper'),
+        adaptiveFillLowerEl: root.querySelector('.adaptive-fill-lower'),
         netFlowContainer: root.querySelector('.net-flow-container'),
         candleTimer: root.querySelector('.candle-timer'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
@@ -1402,6 +1629,9 @@
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         pivotZoneToggleCheckbox: root.querySelector('.pivot-zone-toggle-checkbox'),
+        gmacdToggleCheckbox: root.querySelector('.gmacd-toggle-checkbox'),
+        trendlineToggleCheckbox: root.querySelector('.trendline-toggle-checkbox'),
+        adaptiveToggleCheckbox: root.querySelector('.adaptive-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
         flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
@@ -1424,6 +1654,9 @@
       els.timeframeSelect.value = initialInterval;
       els.srToggleCheckbox.checked = initialSrEnabled;
       els.pivotZoneToggleCheckbox.checked = initialPivotZonesEnabled;
+      els.gmacdToggleCheckbox.checked = initialGmacdEnabled;
+      els.trendlineToggleCheckbox.checked = initialTrendlinesEnabled;
+      els.adaptiveToggleCheckbox.checked = initialAdaptiveTrendEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
       els.macdToggleCheckbox.checked = initialMacdEnabled;
@@ -1525,6 +1758,13 @@
         srEnabled: initialSrEnabled,
         pivotZones: [], // {top, bottom, isBull, startTime, el} - the actual rendered zones
         pivotZonesEnabled: initialPivotZonesEnabled,
+        gmacdBand: null, // {top, bottom} - a single sticky band, unlike pivotZones' array of multiple zones
+        gmacdEnabled: initialGmacdEnabled,
+        trendlineUpper: null, // {pivotTime, pivotPrice, slope} - everything needed to compute the line's current position each render
+        trendlineLower: null,
+        trendlinesEnabled: initialTrendlinesEnabled,
+        adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
+        adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
         volumeProfileEnabled: initialVolumeProfileEnabled,
         gexEnabled: initialGexEnabled,
         macdEnabled: initialMacdEnabled,
@@ -2071,6 +2311,128 @@
         console.log(`[pivotzones:${panel.symbol}] final panel.pivotZones.length=${panel.pivotZones.length}`);
       };
 
+      panel.computeGMACD = function () {
+        panel.gmacdBand = null;
+        if (!panel.gmacdEnabled) {
+          els.gmacdBandEl.style.display = 'none';
+          return;
+        }
+
+        const bars = candlestickSeries.data();
+        if (bars.length < GMACD_SLOW + GMACD_EXTREME_LEN * 2) return; // not enough for even the first threshold value
+
+        const closes = bars.map((b) => b.close);
+        const fastMA = smaSeries(closes, GMACD_FAST);
+        const slowMA = smaSeries(closes, GMACD_SLOW);
+        const macd = closes.map((_, i) => (fastMA[i] != null && slowMA[i] != null) ? fastMA[i] - slowMA[i] : null);
+
+        const highestMacd = rollingExtremeSeries(macd, GMACD_EXTREME_LEN, true);
+        const lowestMacd = rollingExtremeSeries(macd, GMACD_EXTREME_LEN, false);
+        // These ARE the crossing thresholds directly - see the constants
+        // comment above for why this replaces the original valuewhen+
+        // 50-SMA chain.
+        const higher = smaSeries(highestMacd, GMACD_EXTREME_LEN);
+        const lower = smaSeries(lowestMacd, GMACD_EXTREME_LEN);
+
+        // Walk forward tracking the sticky band - updates only when a
+        // qualifying crossing bar occurs, otherwise carries the previous
+        // value forward (matching the Pine script's fixnan behavior).
+        let stickyTop = null, stickyBottom = null;
+        for (let i = 1; i < bars.length; i++) {
+          if (macd[i] == null || macd[i - 1] == null) continue;
+          const above = higher[i] != null && macd[i] > higher[i];
+          const below = lower[i] != null && macd[i] < lower[i];
+          const risingFromLow = macd[i - 1] < macd[i];
+          const fallingFromHigh = macd[i - 1] > macd[i];
+          if ((above && fallingFromHigh) || (below && risingFromLow)) {
+            stickyTop = bars[i].high;
+            stickyBottom = bars[i].low;
+          }
+        }
+
+        if (stickyTop != null && stickyBottom != null) {
+          panel.gmacdBand = { top: stickyTop, bottom: stickyBottom };
+        }
+      };
+
+      panel.computeTrendlines = function () {
+        panel.trendlineUpper = null;
+        panel.trendlineLower = null;
+        if (!panel.trendlinesEnabled) return;
+
+        const bars = candlestickSeries.data();
+        const L = TRENDLINE_LENGTH;
+        if (bars.length < L * 2 + 1) return;
+
+        const atrSeries = computeATRSeries(bars, L);
+        const atrByTime = new Map(atrSeries.map((p) => [p.time, p.value]));
+
+        // Only need the SINGLE most recent pivot of each type (unlike
+        // Pivot Zones' 4-per-side) - the trendline resets entirely at
+        // each new pivot, so only the latest one matters.
+        let lastHigh = null, lastLow = null;
+
+        for (let i = L; i < bars.length - L; i++) {
+          const atr = atrByTime.get(bars[i].time);
+          if (atr == null) continue;
+
+          let isHigh = true, isLow = true;
+          for (let j = i - L; j <= i + L; j++) {
+            if (j === i) continue;
+            if (bars[j].high > bars[i].high) isHigh = false;
+            if (bars[j].low < bars[i].low) isLow = false;
+          }
+
+          // Slope is "locked in" at the pivot's own moment (using ATR at
+          // THAT bar, not the current one) - matches the Pine script's
+          // slope_ph/slope_pl only updating when a new pivot occurs,
+          // held steady otherwise.
+          const slope = (atr / L) * TRENDLINE_SLOPE_MULT;
+          if (isHigh) lastHigh = { pivotTime: bars[i].time, pivotPrice: bars[i].high, slope };
+          if (isLow) lastLow = { pivotTime: bars[i].time, pivotPrice: bars[i].low, slope };
+        }
+
+        panel.trendlineUpper = lastHigh;
+        panel.trendlineLower = lastLow;
+      };
+
+      panel.computeAdaptiveTrend = function () {
+        panel.adaptiveTrend = null;
+        if (!panel.adaptiveTrendEnabled) return;
+
+        const bars = candlestickSeries.data();
+        const maxPeriod = ADAPTIVE_TREND_PERIODS[ADAPTIVE_TREND_PERIODS.length - 1]; // 200 - need enough bars for the LONGEST tested length
+        if (bars.length < maxPeriod) return;
+
+        // Plain max, not max-of-absolute-value - matches the Pine
+        // script's own math.max(pearsonR01, ..., pearsonR19) exactly, a
+        // deliberate fidelity choice rather than "fixing" what might
+        // look like an asymmetry.
+        let best = null;
+        for (const period of ADAPTIVE_TREND_PERIODS) {
+          const result = calcDev(bars, period);
+          if (!result) continue;
+          if (!best || result.pearsonR > best.pearsonR) best = { ...result, period };
+        }
+        if (!best) return;
+
+        const n = bars.length;
+        const endTime = bars[n - 1].time;
+        // Stores the raw regression output (log-space slope/intercept)
+        // rather than pre-computed prices - positionAdaptiveTrend needs
+        // these to extrapolate the line out to the chart's current
+        // visible right edge (matching the Pine script's own
+        // extend=EXTEND_STYLE default of "Extend Right"), the same way
+        // drawTrendline already does for the sloped trendlines feature.
+        panel.adaptiveTrend = {
+          endTime,
+          period: best.period,
+          slope: best.slope,
+          intercept: best.intercept,
+          devFactor: Math.exp(ADAPTIVE_TREND_DEV_MULT * best.stdDev),
+        };
+      };
+
       // Maintains panel.sr15mBars from live ticks, entirely independent of
       // the displayed chart's timeframe/bucket - this is what keeps S/R
       // levels stable across TF switches instead of jumping around. Only
@@ -2169,6 +2531,18 @@
             panel.computePivotZones();
             panel.positionPivotZones();
           }
+          if (panel.gmacdEnabled) {
+            panel.computeGMACD();
+            panel.positionGmacdBand();
+          }
+          if (panel.trendlinesEnabled) {
+            panel.computeTrendlines();
+            panel.positionTrendlines();
+          }
+          if (panel.adaptiveTrendEnabled) {
+            panel.computeAdaptiveTrend();
+            panel.positionAdaptiveTrend();
+          }
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
           // seen so far - comparing only the last two ticks (the
@@ -2230,6 +2604,9 @@
         panel.positionCandleTimer();
         panel.positionSRLabels();
         panel.positionPivotZones();
+        panel.positionGmacdBand();
+        panel.positionTrendlines();
+        panel.positionAdaptiveTrend();
         panel.positionNetFlowLabels();
       };
 
@@ -2605,6 +2982,9 @@
 
         panel.positionSRLabels();
         panel.positionPivotZones();
+        panel.positionGmacdBand();
+        panel.positionTrendlines();
+        panel.positionAdaptiveTrend();
       };
 
       // Repositions the floating R1/R2/S1/S2 labels to sit right on top of
@@ -2679,6 +3059,145 @@
         // actually resolves zones never appearing. Remove once resolved.
         const visibleCount = panel.pivotZones.filter((z) => z.el && z.el.style.display === 'block').length;
         console.log(`[pivotzones:${panel.symbol}] positioned: ${visibleCount}/${panel.pivotZones.length} visible`);
+      };
+
+      panel.positionGmacdBand = function () {
+        if (!panel.gmacdEnabled || !panel.gmacdBand) {
+          els.gmacdBandEl.style.display = 'none';
+          return;
+        }
+
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+        const topY = candlestickSeries.priceToCoordinate(panel.gmacdBand.top);
+        const bottomY = candlestickSeries.priceToCoordinate(panel.gmacdBand.bottom);
+
+        if (topY == null || bottomY == null || bottomY < 0 || topY > height) {
+          els.gmacdBandEl.style.display = 'none';
+          return;
+        }
+
+        els.gmacdBandEl.style.display = 'block';
+        els.gmacdBandEl.style.top = `${Math.max(0, topY)}px`;
+        els.gmacdBandEl.style.height = `${Math.min(height, bottomY) - Math.max(0, topY)}px`;
+        els.gmacdBandEl.style.left = '0px';
+        els.gmacdBandEl.style.width = `${width}px`; // spans the full chart width, unlike pivot zones which start at their own pivot bar
+      };
+
+      // Draws one sloped line from its pivot's own position, extrapolated
+      // out to the chart's visible right edge at the locked-in slope rate.
+      // Shared by both the upper and lower trendline, since the math is
+      // identical apart from which state object/DOM element/sign is used.
+      function drawTrendline(state, el, isUpper, height, width) {
+        if (!state) { el.style.display = 'none'; return; }
+
+        const x1 = chart.timeScale().timeToCoordinate(state.pivotTime);
+        const y1 = candlestickSeries.priceToCoordinate(state.pivotPrice);
+        if (x1 == null || y1 == null) { el.style.display = 'none'; return; }
+
+        // Logical (bar-index) difference, not raw pixel/time difference -
+        // the slope is defined as "price change per BAR", so extrapolating
+        // it correctly requires knowing how many bars separate the pivot
+        // from the right edge, not how many pixels or seconds.
+        const pivotLogical = chart.timeScale().coordinateToLogical(x1);
+        const edgeLogical = chart.timeScale().coordinateToLogical(width);
+        if (pivotLogical == null || edgeLogical == null) { el.style.display = 'none'; return; }
+
+        const barsElapsed = edgeLogical - pivotLogical;
+        const endPrice = isUpper
+          ? state.pivotPrice - state.slope * barsElapsed
+          : state.pivotPrice + state.slope * barsElapsed;
+        const y2 = candlestickSeries.priceToCoordinate(endPrice);
+        if (y2 == null) { el.style.display = 'none'; return; }
+
+        el.style.display = 'block';
+        el.setAttribute('x1', x1);
+        el.setAttribute('y1', y1);
+        el.setAttribute('x2', width);
+        el.setAttribute('y2', y2);
+      }
+
+      panel.positionTrendlines = function () {
+        if (!panel.trendlinesEnabled) {
+          els.trendlineUpperEl.style.display = 'none';
+          els.trendlineLowerEl.style.display = 'none';
+          return;
+        }
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+        drawTrendline(panel.trendlineUpper, els.trendlineUpperEl, true, height, width);
+        drawTrendline(panel.trendlineLower, els.trendlineLowerEl, false, height, width);
+      };
+
+      panel.positionAdaptiveTrend = function () {
+        const hideAll = () => {
+          els.adaptiveMidEl.style.display = 'none';
+          els.adaptiveUpperEl.style.display = 'none';
+          els.adaptiveLowerEl.style.display = 'none';
+          els.adaptiveFillUpperEl.style.display = 'none';
+          els.adaptiveFillLowerEl.style.display = 'none';
+        };
+
+        if (!panel.adaptiveTrendEnabled || !panel.adaptiveTrend) { hideAll(); return; }
+
+        const t = panel.adaptiveTrend;
+        const bars = candlestickSeries.data();
+        const n = bars.length;
+        const startBarIndex = n - t.period;
+        if (startBarIndex < 0 || startBarIndex >= n) { hideAll(); return; }
+
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+
+        const startTime = bars[startBarIndex].time;
+        const x1 = chart.timeScale().timeToCoordinate(startTime);
+        const xEnd = chart.timeScale().timeToCoordinate(t.endTime);
+        if (x1 == null || xEnd == null) { hideAll(); return; }
+
+        // Extrapolate to the visible right edge, same reasoning/technique
+        // as drawTrendline - the regression's own fitted line, extended
+        // (Pine's extend=EXTEND_STYLE default of "Extend Right"), not cut
+        // off at the current bar.
+        const endLogical = chart.timeScale().coordinateToLogical(xEnd);
+        const edgeLogical = chart.timeScale().coordinateToLogical(width);
+        if (endLogical == null || edgeLogical == null) { hideAll(); return; }
+        const barsAheadOfEnd = edgeLogical - endLogical;
+
+        // k=0 is the latest/end bar in calcDev's own convention (see its
+        // comment) - a point `barsAhead` further into the future is
+        // k=-barsAhead, and the fitted log-price at any k is
+        // intercept + slope*k, valid for negative k (extrapolation) too.
+        const midLogPriceAtEdge = t.intercept - t.slope * barsAheadOfEnd;
+        const midLogPriceAtStart = t.intercept + t.slope * (t.period - 1);
+        const midPriceAtStart = Math.exp(midLogPriceAtStart);
+        const midPriceAtEdge = Math.exp(midLogPriceAtEdge);
+
+        const y1Mid = candlestickSeries.priceToCoordinate(midPriceAtStart);
+        const y2Mid = candlestickSeries.priceToCoordinate(midPriceAtEdge);
+        const y1Upper = candlestickSeries.priceToCoordinate(midPriceAtStart * t.devFactor);
+        const y2Upper = candlestickSeries.priceToCoordinate(midPriceAtEdge * t.devFactor);
+        const y1Lower = candlestickSeries.priceToCoordinate(midPriceAtStart / t.devFactor);
+        const y2Lower = candlestickSeries.priceToCoordinate(midPriceAtEdge / t.devFactor);
+
+        if ([y1Mid, y2Mid, y1Upper, y2Upper, y1Lower, y2Lower].some((v) => v == null)) { hideAll(); return; }
+
+        els.adaptiveMidEl.style.display = 'block';
+        els.adaptiveMidEl.setAttribute('x1', x1); els.adaptiveMidEl.setAttribute('y1', y1Mid);
+        els.adaptiveMidEl.setAttribute('x2', width); els.adaptiveMidEl.setAttribute('y2', y2Mid);
+
+        els.adaptiveUpperEl.style.display = 'block';
+        els.adaptiveUpperEl.setAttribute('x1', x1); els.adaptiveUpperEl.setAttribute('y1', y1Upper);
+        els.adaptiveUpperEl.setAttribute('x2', width); els.adaptiveUpperEl.setAttribute('y2', y2Upper);
+
+        els.adaptiveLowerEl.style.display = 'block';
+        els.adaptiveLowerEl.setAttribute('x1', x1); els.adaptiveLowerEl.setAttribute('y1', y1Lower);
+        els.adaptiveLowerEl.setAttribute('x2', width); els.adaptiveLowerEl.setAttribute('y2', y2Lower);
+
+        els.adaptiveFillUpperEl.style.display = 'block';
+        els.adaptiveFillUpperEl.setAttribute('points', `${x1},${y1Mid} ${x1},${y1Upper} ${width},${y2Upper} ${width},${y2Mid}`);
+
+        els.adaptiveFillLowerEl.style.display = 'block';
+        els.adaptiveFillLowerEl.setAttribute('points', `${x1},${y1Mid} ${x1},${y1Lower} ${width},${y2Lower} ${width},${y2Mid}`);
       };
 
       // Fetches and merges gamma x OI across the nearest
@@ -2922,6 +3441,9 @@
           panel.positionCandleTimer();
           panel.positionSRLabels();
           panel.positionPivotZones();
+          panel.positionGmacdBand();
+          panel.positionTrendlines();
+          panel.positionAdaptiveTrend();
           panel.positionNetFlowLabels();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
@@ -3070,6 +3592,18 @@
         if (panel.pivotZonesEnabled) {
           panel.computePivotZones();
           panel.positionPivotZones();
+        }
+        if (panel.gmacdEnabled) {
+          panel.computeGMACD();
+          panel.positionGmacdBand();
+        }
+        if (panel.trendlinesEnabled) {
+          panel.computeTrendlines();
+          panel.positionTrendlines();
+        }
+        if (panel.adaptiveTrendEnabled) {
+          panel.computeAdaptiveTrend();
+          panel.positionAdaptiveTrend();
         }
         panel.positionNetFlowLabels();
         panel.hasLoadedOnce = true;
@@ -3378,6 +3912,27 @@
         saveChartSettings(panel);
       });
 
+      els.gmacdToggleCheckbox.addEventListener('change', () => {
+        panel.gmacdEnabled = els.gmacdToggleCheckbox.checked;
+        panel.computeGMACD();
+        panel.positionGmacdBand();
+        saveChartSettings(panel);
+      });
+
+      els.trendlineToggleCheckbox.addEventListener('change', () => {
+        panel.trendlinesEnabled = els.trendlineToggleCheckbox.checked;
+        panel.computeTrendlines();
+        panel.positionTrendlines();
+        saveChartSettings(panel);
+      });
+
+      els.adaptiveToggleCheckbox.addEventListener('change', () => {
+        panel.adaptiveTrendEnabled = els.adaptiveToggleCheckbox.checked;
+        panel.computeAdaptiveTrend();
+        panel.positionAdaptiveTrend();
+        saveChartSettings(panel);
+      });
+
       els.volumeProfileToggleCheckbox.addEventListener('change', () => {
         panel.volumeProfileEnabled = els.volumeProfileToggleCheckbox.checked;
         panel.positionStrikeOverlay();
@@ -3460,6 +4015,9 @@
         panel.positionCandleTimer();
         panel.positionSRLabels();
         panel.positionPivotZones();
+        panel.positionGmacdBand();
+        panel.positionTrendlines();
+        panel.positionAdaptiveTrend();
         panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
       });
@@ -3475,7 +4033,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBand(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
