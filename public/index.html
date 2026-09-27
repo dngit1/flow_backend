@@ -775,6 +775,62 @@
       z-index: 9; /* above pivot zones/GMACD (7-8) - these are lines, not fill areas, meant to stay visible over them */
     }
 
+    .drawing-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none; /* the SVG itself never blocks chart interaction - only individual drawing elements (below) opt back in, so clicking empty space always reaches the chart underneath */
+      z-index: 10; /* above the read-only indicator overlays - user's own drawings should never be hidden behind them */
+    }
+
+    .drawing-element {
+      pointer-events: auto; /* re-enabled per-element, specifically so a drawing itself can be clicked to select it */
+      cursor: pointer;
+    }
+
+    .drawing-element.selected {
+      stroke-width: 3;
+    }
+
+    .drawing-toolbar {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 15; /* above everything chart-related, same tier as sr-label */
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      background-color: rgba(19, 23, 34, 0.85);
+      border: 1px solid #364153;
+      border-radius: 6px;
+      padding: 4px;
+    }
+
+    .drawing-tool-btn {
+      width: 28px;
+      height: 28px;
+      background-color: transparent;
+      color: #8fa0be;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .drawing-tool-btn:hover {
+      background-color: #2b3548;
+    }
+
+    .drawing-tool-btn.active {
+      background-color: #2563eb;
+      color: #ffffff;
+    }
+
     .trendline-upper, .trendline-lower {
       stroke-width: 2;
       stroke-dasharray: 5, 4;
@@ -979,7 +1035,14 @@
           <span class="status-badge">Disconnected</span>
           <span class="ws-debug"></span>
         </div>
+        <div class="drawing-toolbar">
+          <button class="drawing-tool-btn active" data-tool="cursor" title="Cursor">&#8598;</button>
+          <button class="drawing-tool-btn" data-tool="hline" title="Horizontal Line">&#8213;</button>
+          <button class="drawing-tool-btn" data-tool="trendline" title="Trend Line">&#8599;</button>
+          <button class="drawing-tool-btn" data-tool="fib" title="Fib Retracement">F</button>
+        </div>
         <div class="chart-container"></div>
+        <svg class="drawing-svg"></svg>
         <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
         <div class="candle-timer"></div>
@@ -1091,7 +1154,14 @@
           <span class="status-badge">Disconnected</span>
           <span class="ws-debug"></span>
         </div>
+        <div class="drawing-toolbar">
+          <button class="drawing-tool-btn active" data-tool="cursor" title="Cursor">&#8598;</button>
+          <button class="drawing-tool-btn" data-tool="hline" title="Horizontal Line">&#8213;</button>
+          <button class="drawing-tool-btn" data-tool="trendline" title="Trend Line">&#8599;</button>
+          <button class="drawing-tool-btn" data-tool="fib" title="Fib Retracement">F</button>
+        </div>
         <div class="chart-container"></div>
+        <svg class="drawing-svg"></svg>
         <div class="chart-watermark">XNLflow.com</div>
         <div class="chart-error-banner"></div>
         <div class="candle-timer"></div>
@@ -1203,6 +1273,8 @@
     const ADAPTIVE_TREND_PERIODS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
     const ADAPTIVE_TREND_DEV_MULT = 2.0; // Pine's "devMultiplier"
 
+    const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
+
     // GEX walls/flip aggregate gamma x OI across the nearest N
     // expirations, not just whichever one is selected in the EXP dropdown
     // - a single expiration is too small a slice of total open interest
@@ -1253,6 +1325,35 @@
     // three things changes (saveChartSettings) - never on every price
     // tick or anything high-frequency. Wrapped in try/catch since
     // localStorage can throw (private browsing, storage disabled/full).
+    // Keyed by symbol, NOT panel index (unlike chartSettingsKey below) -
+    // drawings follow a ticker regardless of which panel (0 or 1) it's
+    // loaded into, per the explicit "per ticker, not per panel" request.
+    function drawingsKey(symbol) {
+      return `xnlflow:drawings:${symbol}`;
+    }
+
+    function loadDrawings(symbol) {
+      try {
+        const raw = localStorage.getItem(drawingsKey(symbol));
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveDrawings(symbol, drawings) {
+      try {
+        // Strip the 'el'/'els' DOM references before saving - only the
+        // actual data (type, points) is meaningful across a reload; a
+        // reference to a specific DOM element from a previous page load
+        // is meaningless and can't be serialized anyway.
+        const serializable = drawings.map(({ id, type, points }) => ({ id, type, points }));
+        localStorage.setItem(drawingsKey(symbol), JSON.stringify(serializable));
+      } catch (e) {
+        console.error(`[drawings:${symbol}] failed to save:`, e);
+      }
+    }
+
     function chartSettingsKey(index) {
       return `xnlflow:panel:${index}:settings`;
     }
@@ -1598,6 +1699,8 @@
         adaptiveLowerEl: root.querySelector('.adaptive-lower'),
         adaptiveFillUpperEl: root.querySelector('.adaptive-fill-upper'),
         adaptiveFillLowerEl: root.querySelector('.adaptive-fill-lower'),
+        drawingToolbar: root.querySelector('.drawing-toolbar'),
+        drawingSvg: root.querySelector('.drawing-svg'),
         netFlowContainer: root.querySelector('.net-flow-container'),
         candleTimer: root.querySelector('.candle-timer'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
@@ -1740,6 +1843,10 @@
         trendlinesEnabled: initialLevelsTrendlinesEnabled,
         adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
         adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
+        drawings: [], // {id, type: 'hline'|'trendline'|'fib', points: [{time, price}, ...], el/els} - persisted per-symbol, not per-panel (see saveDrawings/loadDrawings)
+        activeDrawingTool: 'cursor', // 'cursor'|'hline'|'trendline'|'fib' - which toolbar button is armed
+        pendingDrawingPoint: null, // first click of a two-click tool (trendline/fib), waiting for the second
+        selectedDrawingId: null,
         volumeProfileEnabled: initialVolumeProfileEnabled,
         gexEnabled: initialGexEnabled,
         macdEnabled: initialMacdEnabled,
@@ -2519,6 +2626,7 @@
             panel.computeAdaptiveTrend();
             panel.positionAdaptiveTrend();
           }
+          panel.positionDrawings();
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
           // seen so far - comparing only the last two ticks (the
@@ -2545,6 +2653,19 @@
           if (panel.closeHistory.length > 0) {
             panel.closeHistory[panel.closeHistory.length - 1].close = tradePrice;
           }
+          // Reposition-only (no recompute) - the underlying pivot/
+          // regression math only changes when a bar actually closes (see
+          // the branch above), but the visible right edge of anything
+          // that "extends to now" needs to keep pace with every tick,
+          // same as the candles themselves already do via the update()
+          // calls above. Without this, these overlays visibly lagged
+          // behind the current candle for up to a full bar's worth of
+          // time, only catching up once the NEXT bar closed.
+          if (panel.pivotZonesEnabled) panel.positionPivotZones();
+          if (panel.gmacdEnabled) panel.positionGmacdBands();
+          if (panel.trendlinesEnabled) panel.positionTrendlines();
+          if (panel.adaptiveTrendEnabled) panel.positionAdaptiveTrend();
+          panel.positionDrawings();
         }
 
         const hist = panel.closeHistory;
@@ -2583,6 +2704,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionDrawings();
         panel.positionNetFlowLabels();
       };
 
@@ -2961,6 +3083,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionDrawings();
       };
 
       // Repositions the floating R1/R2/S1/S2 labels to sit right on top of
@@ -3199,6 +3322,184 @@
         els.adaptiveFillLowerEl.style.display = 'block';
         els.adaptiveFillLowerEl.setAttribute('points', `${x1},${y1Mid} ${x1},${y1Lower} ${width},${y2Lower} ${width},${y2Mid}`);
       };
+
+      // Rebuilds the DOM from scratch (clears the container, recreates
+      // every element for every drawing) - called whenever the drawings
+      // array itself changes (a new one added, one deleted, switching
+      // tickers). Range-change/resize alone doesn't need this - see
+      // positionDrawings, which repositions existing elements without
+      // recreating them.
+      panel.renderDrawings = function () {
+        els.drawingSvg.innerHTML = '';
+        for (const drawing of panel.drawings) {
+          drawing.els = [];
+          if (drawing.type === 'fib') {
+            for (let i = 0; i < FIB_LEVELS.length; i++) {
+              const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+              line.setAttribute('stroke', '#ba68c8');
+              line.setAttribute('stroke-width', '1.5');
+              const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+              label.setAttribute('fill', '#ba68c8');
+              label.setAttribute('font-size', '11');
+              drawing.els.push(line, label);
+            }
+          } else {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('stroke', drawing.type === 'hline' ? '#ffd54f' : '#42a5f5');
+            line.setAttribute('stroke-width', '2');
+            drawing.els.push(line);
+          }
+
+          for (const el of drawing.els) {
+            el.classList.add('drawing-element');
+            el.addEventListener('click', (e) => {
+              e.stopPropagation();
+              panel.selectDrawing(drawing.id);
+            });
+            els.drawingSvg.appendChild(el);
+          }
+        }
+        panel.positionDrawings();
+      };
+
+      panel.positionDrawings = function () {
+        const height = els.chartContainer.clientHeight || 0;
+        const width = els.chartContainer.clientWidth || 0;
+
+        for (const drawing of panel.drawings) {
+          if (!drawing.els) continue;
+          const isSelected = drawing.id === panel.selectedDrawingId;
+
+          if (drawing.type === 'hline') {
+            const y = candlestickSeries.priceToCoordinate(drawing.points[0].price);
+            const line = drawing.els[0];
+            if (y == null) { line.style.display = 'none'; continue; }
+            line.style.display = 'block';
+            line.classList.toggle('selected', isSelected);
+            line.setAttribute('x1', 0); line.setAttribute('y1', y);
+            line.setAttribute('x2', width); line.setAttribute('y2', y);
+          } else if (drawing.type === 'trendline') {
+            const x1 = chart.timeScale().timeToCoordinate(drawing.points[0].time);
+            const y1 = candlestickSeries.priceToCoordinate(drawing.points[0].price);
+            const x2 = chart.timeScale().timeToCoordinate(drawing.points[1].time);
+            const y2 = candlestickSeries.priceToCoordinate(drawing.points[1].price);
+            const line = drawing.els[0];
+            if (x1 == null || y1 == null || x2 == null || y2 == null) { line.style.display = 'none'; continue; }
+            line.style.display = 'block';
+            line.classList.toggle('selected', isSelected);
+            line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+          } else if (drawing.type === 'fib') {
+            const x1 = chart.timeScale().timeToCoordinate(drawing.points[0].time);
+            const x2 = chart.timeScale().timeToCoordinate(drawing.points[1].time);
+            const p1 = drawing.points[0].price;
+            const p2 = drawing.points[1].price;
+            if (x1 == null || x2 == null) {
+              for (const el of drawing.els) el.style.display = 'none';
+              continue;
+            }
+            const leftX = Math.min(x1, x2), rightX = Math.max(x1, x2);
+            for (let i = 0; i < FIB_LEVELS.length; i++) {
+              const level = FIB_LEVELS[i];
+              const price = p1 + (p2 - p1) * level; // level 0 = point 1's price, level 1 = point 2's price - standard retracement convention
+              const y = candlestickSeries.priceToCoordinate(price);
+              const line = drawing.els[i * 2];
+              const label = drawing.els[i * 2 + 1];
+              if (y == null) { line.style.display = 'none'; label.style.display = 'none'; continue; }
+              line.style.display = 'block';
+              line.classList.toggle('selected', isSelected);
+              line.setAttribute('x1', leftX); line.setAttribute('y1', y);
+              line.setAttribute('x2', rightX); line.setAttribute('y2', y);
+              label.style.display = 'block';
+              label.setAttribute('x', rightX + 4);
+              label.setAttribute('y', y + 4);
+              label.textContent = `${(level * 100).toFixed(1)}% (${price.toFixed(2)})`;
+            }
+          }
+        }
+      };
+
+      panel.addDrawing = function (type, points) {
+        const drawing = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type, points, els: null };
+        panel.drawings.push(drawing);
+        panel.renderDrawings();
+        saveDrawings(panel.symbol, panel.drawings);
+      };
+
+      panel.selectDrawing = function (id) {
+        panel.selectedDrawingId = id;
+        panel.positionDrawings(); // just toggles the .selected class on existing elements, no need to rebuild
+      };
+
+      panel.deselectAllDrawings = function () {
+        if (panel.selectedDrawingId == null) return;
+        panel.selectedDrawingId = null;
+        panel.positionDrawings();
+      };
+
+      panel.deleteSelectedDrawing = function () {
+        if (panel.selectedDrawingId == null) return;
+        panel.drawings = panel.drawings.filter((d) => d.id !== panel.selectedDrawingId);
+        panel.selectedDrawingId = null;
+        panel.renderDrawings();
+        saveDrawings(panel.symbol, panel.drawings);
+      };
+
+      panel.setActiveDrawingTool = function (tool) {
+        panel.activeDrawingTool = tool;
+        panel.pendingDrawingPoint = null; // switching tools mid-drawing cancels whatever was in progress
+        for (const btn of els.drawingToolbar.querySelectorAll('.drawing-tool-btn')) {
+          btn.classList.toggle('active', btn.dataset.tool === tool);
+        }
+      };
+
+      for (const btn of els.drawingToolbar.querySelectorAll('.drawing-tool-btn')) {
+        btn.addEventListener('click', () => panel.setActiveDrawingTool(btn.dataset.tool));
+      }
+
+      chart.subscribeClick((param) => {
+        if (!param.point) return; // clicked outside the chart's plot area (e.g. on an axis)
+        const price = candlestickSeries.coordinateToPrice(param.point.y);
+        if (price == null) return;
+
+        if (panel.activeDrawingTool === 'cursor') {
+          // A click that landed ON a drawing is handled by that
+          // drawing's own element listener (which stopPropagation()s),
+          // so this only fires for clicks on empty chart space -
+          // meaning deselecting here is exactly the right behavior.
+          panel.deselectAllDrawings();
+          return;
+        }
+
+        if (panel.activeDrawingTool === 'hline') {
+          panel.addDrawing('hline', [{ price }]);
+          panel.setActiveDrawingTool('cursor'); // one-shot - matches "simple tools" rather than staying armed for repeated use
+          return;
+        }
+
+        if (panel.activeDrawingTool === 'trendline' || panel.activeDrawingTool === 'fib') {
+          if (param.time == null) return; // clicked in empty space with no bar underneath - can't anchor a time-based point there
+          if (!panel.pendingDrawingPoint) {
+            panel.pendingDrawingPoint = { time: param.time, price };
+          } else {
+            panel.addDrawing(panel.activeDrawingTool, [panel.pendingDrawingPoint, { time: param.time, price }]);
+            panel.pendingDrawingPoint = null;
+            panel.setActiveDrawingTool('cursor');
+          }
+        }
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if ((e.key === 'Delete' || e.key === 'Backspace') && panel.selectedDrawingId != null) {
+          // Don't hijack Delete/Backspace while the user is typing
+          // somewhere else on the page (the ticker input, an indicator
+          // period field, etc.) - only act when a drawing is genuinely
+          // the thing selected, not incidentally while text is focused.
+          const tag = document.activeElement?.tagName;
+          if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+          panel.deleteSelectedDrawing();
+        }
+      });
 
       // Fetches and merges gamma x OI across the nearest
       // GEX_EXPIRATION_COUNT expirations (not just whichever one is
@@ -3444,6 +3745,7 @@
           panel.positionGmacdBands();
           panel.positionTrendlines();
           panel.positionAdaptiveTrend();
+          panel.positionDrawings();
           panel.positionNetFlowLabels();
         } catch (err) {
           console.error(`[walls:${panel.symbol}] Failed to compute call/put walls:`, err);
@@ -3604,8 +3906,12 @@
         if (panel.adaptiveTrendEnabled) {
           panel.computeAdaptiveTrend();
           panel.positionAdaptiveTrend();
+          panel.positionDrawings();
         }
         panel.positionNetFlowLabels();
+        panel.drawings = loadDrawings(symbol);
+        panel.selectedDrawingId = null;
+        panel.renderDrawings();
         panel.hasLoadedOnce = true;
         // TEMPORARY: Replay confirmed freezing the tab for stock tickers
         // (root cause not yet found - it works fine for futures, which
@@ -3923,6 +4229,7 @@
         panel.adaptiveTrendEnabled = els.adaptiveToggleCheckbox.checked;
         panel.computeAdaptiveTrend();
         panel.positionAdaptiveTrend();
+        panel.positionDrawings();
         saveChartSettings(panel);
       });
 
@@ -4011,6 +4318,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionDrawings();
         panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
       });
@@ -4026,7 +4334,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionDrawings(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
