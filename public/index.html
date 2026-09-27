@@ -923,20 +923,12 @@
             Support/Resistance
           </label>
           <label class="sr-toggle-row">
-            <input type="checkbox" class="pivot-zone-toggle-checkbox" />
-            Pivot Zones (new)
-          </label>
-          <label class="sr-toggle-row">
-            <input type="checkbox" class="gmacd-toggle-checkbox" />
-            GMACD S/R Area (new)
-          </label>
-          <label class="sr-toggle-row">
-            <input type="checkbox" class="trendline-toggle-checkbox" />
-            Sloped Trendlines (new)
+            <input type="checkbox" class="levels-trendlines-toggle-checkbox" />
+            Levels and Trendlines (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="adaptive-toggle-checkbox" />
-            Adaptive Trend Finder (new)
+            Channel (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1043,20 +1035,12 @@
             Support/Resistance
           </label>
           <label class="sr-toggle-row">
-            <input type="checkbox" class="pivot-zone-toggle-checkbox" />
-            Pivot Zones (new)
-          </label>
-          <label class="sr-toggle-row">
-            <input type="checkbox" class="gmacd-toggle-checkbox" />
-            GMACD S/R Area (new)
-          </label>
-          <label class="sr-toggle-row">
-            <input type="checkbox" class="trendline-toggle-checkbox" />
-            Sloped Trendlines (new)
+            <input type="checkbox" class="levels-trendlines-toggle-checkbox" />
+            Levels and Trendlines (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="adaptive-toggle-checkbox" />
-            Adaptive Trend Finder (new)
+            Channel (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1289,9 +1273,7 @@
           symbol: panel.symbol,
           interval: panel.interval,
           srEnabled: panel.srEnabled,
-          pivotZonesEnabled: panel.pivotZonesEnabled,
-          gmacdEnabled: panel.gmacdEnabled,
-          trendlinesEnabled: panel.trendlinesEnabled,
+          levelsTrendlinesEnabled: panel.pivotZonesEnabled, // combined toggle - pivotZonesEnabled/gmacdEnabled/trendlinesEnabled always stay in sync now, so this one is representative of all three
           adaptiveTrendEnabled: panel.adaptiveTrendEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
@@ -1585,9 +1567,7 @@
       const initialSymbol = saved?.symbol || defaultSymbol;
       const initialInterval = (saved?.interval && INTERVAL_SECONDS[saved.interval]) ? saved.interval : '1min';
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
-      const initialPivotZonesEnabled = saved?.pivotZonesEnabled === true; // default OFF - new feature, being introduced alongside the existing S/R rather than replacing it yet
-      const initialGmacdEnabled = saved?.gmacdEnabled === true; // default OFF - same reasoning as pivot zones
-      const initialTrendlinesEnabled = saved?.trendlinesEnabled === true; // default OFF - same reasoning
+      const initialLevelsTrendlinesEnabled = saved?.levelsTrendlinesEnabled === true; // default OFF - combines what were three separate toggles (Pivot Zones, GMACD, Sloped Trendlines) into one, matching the original Pine script's own combined title
       const initialAdaptiveTrendEnabled = saved?.adaptiveTrendEnabled === true; // default OFF - same reasoning
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
@@ -1627,9 +1607,7 @@
         indicatorStyleSelect: root.querySelector('.indicator-style-select'),
         indicatorAddBtn: root.querySelector('.indicator-add-btn'),
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
-        pivotZoneToggleCheckbox: root.querySelector('.pivot-zone-toggle-checkbox'),
-        gmacdToggleCheckbox: root.querySelector('.gmacd-toggle-checkbox'),
-        trendlineToggleCheckbox: root.querySelector('.trendline-toggle-checkbox'),
+        levelsTrendlinesToggleCheckbox: root.querySelector('.levels-trendlines-toggle-checkbox'),
         adaptiveToggleCheckbox: root.querySelector('.adaptive-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
@@ -1652,9 +1630,7 @@
       els.tickerInput.value = initialSymbol;
       els.timeframeSelect.value = initialInterval;
       els.srToggleCheckbox.checked = initialSrEnabled;
-      els.pivotZoneToggleCheckbox.checked = initialPivotZonesEnabled;
-      els.gmacdToggleCheckbox.checked = initialGmacdEnabled;
-      els.trendlineToggleCheckbox.checked = initialTrendlinesEnabled;
+      els.levelsTrendlinesToggleCheckbox.checked = initialLevelsTrendlinesEnabled;
       els.adaptiveToggleCheckbox.checked = initialAdaptiveTrendEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
@@ -1756,12 +1732,12 @@
         srLevels: [], // {price, el} for each level's floating R1/R2/S1/S2 label - repositioned on every price tick/resize/zoom
         srEnabled: initialSrEnabled,
         pivotZones: [], // {top, bottom, isBull, startTime, el} - the actual rendered zones
-        pivotZonesEnabled: initialPivotZonesEnabled,
+        pivotZonesEnabled: initialLevelsTrendlinesEnabled,
         gmacdBands: [], // {top, bottom, startTime, endTime, el} - multiple historical segments, matching how the Pine script's fixnan-carried value steps through history rather than just showing the latest one
-        gmacdEnabled: initialGmacdEnabled,
+        gmacdEnabled: initialLevelsTrendlinesEnabled,
         trendlineUpper: null, // {pivotTime, pivotPrice, slope} - everything needed to compute the line's current position each render
         trendlineLower: null,
-        trendlinesEnabled: initialTrendlinesEnabled,
+        trendlinesEnabled: initialLevelsTrendlinesEnabled,
         adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
         adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
         volumeProfileEnabled: initialVolumeProfileEnabled,
@@ -3929,22 +3905,15 @@
         saveChartSettings(panel);
       });
 
-      els.pivotZoneToggleCheckbox.addEventListener('change', () => {
-        panel.pivotZonesEnabled = els.pivotZoneToggleCheckbox.checked;
+      els.levelsTrendlinesToggleCheckbox.addEventListener('change', () => {
+        const checked = els.levelsTrendlinesToggleCheckbox.checked;
+        panel.pivotZonesEnabled = checked;
+        panel.gmacdEnabled = checked;
+        panel.trendlinesEnabled = checked;
         panel.computePivotZones();
         panel.positionPivotZones();
-        saveChartSettings(panel);
-      });
-
-      els.gmacdToggleCheckbox.addEventListener('change', () => {
-        panel.gmacdEnabled = els.gmacdToggleCheckbox.checked;
         panel.computeGMACD();
         panel.positionGmacdBands();
-        saveChartSettings(panel);
-      });
-
-      els.trendlineToggleCheckbox.addEventListener('change', () => {
-        panel.trendlinesEnabled = els.trendlineToggleCheckbox.checked;
         panel.computeTrendlines();
         panel.positionTrendlines();
         saveChartSettings(panel);
