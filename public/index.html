@@ -758,11 +758,10 @@
       border-radius: 2px;
     }
 
-    .gmacd-band-box {
+    .gmacd-band-segment {
       position: absolute;
       pointer-events: none;
       z-index: 7; /* below pivot zones (8) - GMACD is the broader, coarser band of the two */
-      display: none;
       background-color: rgba(255, 152, 0, 0.15); /* orange, matching the Pine script's own g_color */
     }
 
@@ -1002,7 +1001,7 @@
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="pivot-zone-container"></div>
-        <div class="gmacd-band-box"></div>
+        <div class="gmacd-band-container"></div>
         <svg class="trendline-svg">
           <polygon class="adaptive-fill-upper" />
           <polygon class="adaptive-fill-lower" />
@@ -1122,7 +1121,7 @@
         <div class="wall-label gex-magnet-label" style="display:none;"></div>
         <div class="sr-label-container"></div>
         <div class="pivot-zone-container"></div>
-        <div class="gmacd-band-box"></div>
+        <div class="gmacd-band-container"></div>
         <svg class="trendline-svg">
           <polygon class="adaptive-fill-upper" />
           <polygon class="adaptive-fill-lower" />
@@ -1611,7 +1610,7 @@
         strikeOverlayContainer: root.querySelector('.strike-overlay-container'),
         srLabelContainer: root.querySelector('.sr-label-container'),
         pivotZoneContainer: root.querySelector('.pivot-zone-container'),
-        gmacdBandEl: root.querySelector('.gmacd-band-box'),
+        gmacdBandContainer: root.querySelector('.gmacd-band-container'),
         trendlineUpperEl: root.querySelector('.trendline-upper'),
         trendlineLowerEl: root.querySelector('.trendline-lower'),
         adaptiveMidEl: root.querySelector('.adaptive-mid'),
@@ -1758,7 +1757,7 @@
         srEnabled: initialSrEnabled,
         pivotZones: [], // {top, bottom, isBull, startTime, el} - the actual rendered zones
         pivotZonesEnabled: initialPivotZonesEnabled,
-        gmacdBand: null, // {top, bottom} - a single sticky band, unlike pivotZones' array of multiple zones
+        gmacdBands: [], // {top, bottom, startTime, endTime, el} - multiple historical segments, matching how the Pine script's fixnan-carried value steps through history rather than just showing the latest one
         gmacdEnabled: initialGmacdEnabled,
         trendlineUpper: null, // {pivotTime, pivotPrice, slope} - everything needed to compute the line's current position each render
         trendlineLower: null,
@@ -2312,11 +2311,9 @@
       };
 
       panel.computeGMACD = function () {
-        panel.gmacdBand = null;
-        if (!panel.gmacdEnabled) {
-          els.gmacdBandEl.style.display = 'none';
-          return;
-        }
+        els.gmacdBandContainer.innerHTML = ''; // clear rendered DOM elements too, same reasoning as computePivotZones - a fresh array here (with el:null) would otherwise orphan the previous call's boxes in the DOM
+        panel.gmacdBands = [];
+        if (!panel.gmacdEnabled) return;
 
         const bars = candlestickSeries.data();
         if (bars.length < GMACD_SLOW + GMACD_EXTREME_LEN * 2) return; // not enough for even the first threshold value
@@ -2334,10 +2331,12 @@
         const higher = smaSeries(highestMacd, GMACD_EXTREME_LEN);
         const lower = smaSeries(lowestMacd, GMACD_EXTREME_LEN);
 
-        // Walk forward tracking the sticky band - updates only when a
-        // qualifying crossing bar occurs, otherwise carries the previous
-        // value forward (matching the Pine script's fixnan behavior).
-        let stickyTop = null, stickyBottom = null;
+        // Walk forward building a NEW segment each time a qualifying
+        // crossing bar occurs, closing out the previous one at that same
+        // point - matches how the Pine script's fixnan-carried value
+        // actually looks across history (a step function with one
+        // segment per crossing event), not just the single latest value.
+        let current = null; // { top, bottom, startTime }
         for (let i = 1; i < bars.length; i++) {
           if (macd[i] == null || macd[i - 1] == null) continue;
           const above = higher[i] != null && macd[i] > higher[i];
@@ -2345,14 +2344,15 @@
           const risingFromLow = macd[i - 1] < macd[i];
           const fallingFromHigh = macd[i - 1] > macd[i];
           if ((above && fallingFromHigh) || (below && risingFromLow)) {
-            stickyTop = bars[i].high;
-            stickyBottom = bars[i].low;
+            if (current) panel.gmacdBands.push({ top: current.top, bottom: current.bottom, startTime: current.startTime, endTime: bars[i].time, el: null });
+            current = { top: bars[i].high, bottom: bars[i].low, startTime: bars[i].time };
           }
         }
-
-        if (stickyTop != null && stickyBottom != null) {
-          panel.gmacdBand = { top: stickyTop, bottom: stickyBottom };
-        }
+        // The final (still "open") segment extends to now - endTime null
+        // signals positionGmacdBands to extend it to the visible right
+        // edge instead of a fixed point, same as how a still-active pivot
+        // zone or trendline behaves.
+        if (current) panel.gmacdBands.push({ top: current.top, bottom: current.bottom, startTime: current.startTime, endTime: null, el: null });
       };
 
       panel.computeTrendlines = function () {
@@ -2533,7 +2533,7 @@
           }
           if (panel.gmacdEnabled) {
             panel.computeGMACD();
-            panel.positionGmacdBand();
+            panel.positionGmacdBands();
           }
           if (panel.trendlinesEnabled) {
             panel.computeTrendlines();
@@ -2604,7 +2604,7 @@
         panel.positionCandleTimer();
         panel.positionSRLabels();
         panel.positionPivotZones();
-        panel.positionGmacdBand();
+        panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
         panel.positionNetFlowLabels();
@@ -2982,7 +2982,7 @@
 
         panel.positionSRLabels();
         panel.positionPivotZones();
-        panel.positionGmacdBand();
+        panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
       };
@@ -3061,27 +3061,51 @@
         console.log(`[pivotzones:${panel.symbol}] positioned: ${visibleCount}/${panel.pivotZones.length} visible`);
       };
 
-      panel.positionGmacdBand = function () {
-        if (!panel.gmacdEnabled || !panel.gmacdBand) {
-          els.gmacdBandEl.style.display = 'none';
-          return;
-        }
-
+      panel.positionGmacdBands = function () {
         const height = els.chartContainer.clientHeight || 0;
         const width = els.chartContainer.clientWidth || 0;
-        const topY = candlestickSeries.priceToCoordinate(panel.gmacdBand.top);
-        const bottomY = candlestickSeries.priceToCoordinate(panel.gmacdBand.bottom);
 
-        if (topY == null || bottomY == null || bottomY < 0 || topY > height) {
-          els.gmacdBandEl.style.display = 'none';
-          return;
+        for (const seg of panel.gmacdBands) {
+          if (!seg.el) {
+            seg.el = document.createElement('div');
+            seg.el.className = 'gmacd-band-segment';
+            els.gmacdBandContainer.appendChild(seg.el);
+          }
+
+          const topY = candlestickSeries.priceToCoordinate(seg.top);
+          const bottomY = candlestickSeries.priceToCoordinate(seg.bottom);
+          const leftXRaw = chart.timeScale().timeToCoordinate(seg.startTime);
+          // null endTime means this is the still-open, most recent
+          // segment - extends to the chart's current visible right edge,
+          // same reasoning as pivot zones/trendlines extending forward.
+          const rightXRaw = seg.endTime == null ? width : chart.timeScale().timeToCoordinate(seg.endTime);
+
+          if (topY == null || bottomY == null || bottomY < 0 || topY > height) {
+            seg.el.style.display = 'none';
+            continue;
+          }
+          // A segment fully to the left of the visible range (both its
+          // start AND end are unresolvable/off-screen) should be hidden
+          // entirely, not clamped - same as pivot zones, an out-of-view
+          // start alone just gets clamped to the left edge.
+          if (leftXRaw == null && rightXRaw == null) {
+            seg.el.style.display = 'none';
+            continue;
+          }
+          if (rightXRaw != null && rightXRaw < 0) {
+            seg.el.style.display = 'none';
+            continue;
+          }
+
+          const leftX = leftXRaw == null ? 0 : leftXRaw;
+          const rightX = rightXRaw == null ? width : rightXRaw;
+
+          seg.el.style.display = 'block';
+          seg.el.style.top = `${Math.max(0, topY)}px`;
+          seg.el.style.height = `${Math.min(height, bottomY) - Math.max(0, topY)}px`;
+          seg.el.style.left = `${Math.max(0, leftX)}px`;
+          seg.el.style.width = `${Math.max(0, rightX - Math.max(0, leftX))}px`;
         }
-
-        els.gmacdBandEl.style.display = 'block';
-        els.gmacdBandEl.style.top = `${Math.max(0, topY)}px`;
-        els.gmacdBandEl.style.height = `${Math.min(height, bottomY) - Math.max(0, topY)}px`;
-        els.gmacdBandEl.style.left = '0px';
-        els.gmacdBandEl.style.width = `${width}px`; // spans the full chart width, unlike pivot zones which start at their own pivot bar
       };
 
       // Draws one sloped line from its pivot's own position, extrapolated
@@ -3441,7 +3465,7 @@
           panel.positionCandleTimer();
           panel.positionSRLabels();
           panel.positionPivotZones();
-          panel.positionGmacdBand();
+          panel.positionGmacdBands();
           panel.positionTrendlines();
           panel.positionAdaptiveTrend();
           panel.positionNetFlowLabels();
@@ -3595,7 +3619,7 @@
         }
         if (panel.gmacdEnabled) {
           panel.computeGMACD();
-          panel.positionGmacdBand();
+          panel.positionGmacdBands();
         }
         if (panel.trendlinesEnabled) {
           panel.computeTrendlines();
@@ -3915,7 +3939,7 @@
       els.gmacdToggleCheckbox.addEventListener('change', () => {
         panel.gmacdEnabled = els.gmacdToggleCheckbox.checked;
         panel.computeGMACD();
-        panel.positionGmacdBand();
+        panel.positionGmacdBands();
         saveChartSettings(panel);
       });
 
@@ -4015,7 +4039,7 @@
         panel.positionCandleTimer();
         panel.positionSRLabels();
         panel.positionPivotZones();
-        panel.positionGmacdBand();
+        panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
         panel.positionNetFlowLabels();
@@ -4033,7 +4057,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBand(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
