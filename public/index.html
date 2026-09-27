@@ -795,11 +795,18 @@
     }
 
     .drawing-toolbar {
+      /* TEMPORARILY HIDDEN - was overlapping the ticker overlay
+         (symbol/price/status) at the top-left of the chart. The
+         underlying drawing logic (creating, selecting, deleting,
+         persisting, and rendering already-saved drawings) is untouched -
+         only the toolbar for CREATING new ones is hidden. Re-enable by
+         removing this display:none, ideally after also adjusting
+         top/left so it no longer overlaps the ticker overlay. */
+      display: none;
       position: absolute;
       top: 8px;
       left: 8px;
       z-index: 15; /* above everything chart-related, same tier as sr-label */
-      display: flex;
       flex-direction: column;
       gap: 2px;
       background-color: rgba(19, 23, 34, 0.85);
