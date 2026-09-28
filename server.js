@@ -10,6 +10,8 @@ const { createAlpacaHub } = require('./lib/alpacaHub'); // kept as a fallback - 
 const { createTradierHub } = require('./lib/tradierHub');
 const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
+const { createIndexHub } = require('./lib/indexHub');
+const { isIndexSymbol } = require('./lib/indexSymbols');
 const { createFlowBuffer } = require('./lib/flowBuffer');
 const cache = require('./lib/cache');
 const flowHistory = require('./lib/flowHistory');
@@ -169,6 +171,31 @@ const stockHub = createStockHub({
   },
 });
 
+// Live prices for INDEXES (SPX etc.). The stock feed can't supply these -
+// Alpaca has no index data and reports an unrelated ~$0.10 security under
+// "SPX" - so they come from Tradier's index quote instead (see
+// lib/indexSymbols.js). size is 0: an index has no trade size, so this
+// never triggers the block-trade logic in the stock hub's onTrade above.
+const indexHub = createIndexHub({
+  token: TRADIER_TOKEN,
+  onTick: ({ symbol, price, timeMs }) => broadcastPrice(symbol, { price, size: 0, timeMs }),
+  // Per-client, deliberately NOT the global stock-feed status: that one
+  // reflects Alpaca's connection, which an index doesn't use.
+  onClientStatus: (clientId, status, detail) => sendToClient(clientId, { type: 'price_feed_status', status, detail }),
+});
+
+// Which hub serves live prices for a given symbol.
+function priceHubFor(symbol) {
+  if (isFuturesTicker(symbol)) return futuresHub;
+  if (isIndexSymbol(symbol)) return indexHub;
+  return stockHub;
+}
+
+// Last known price, from whichever hub owns the symbol.
+function lastPriceOf(symbol) {
+  return isIndexSymbol(symbol) ? indexHub.lastPriceOf(symbol) : stockHub.lastPriceOf(symbol);
+}
+
 const tradierHub = createTradierHub({
   token: TRADIER_TOKEN,
   onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
@@ -215,7 +242,7 @@ const futuresHub = createFuturesHub({
 app.use('/api', createDataProxyRouter({
   twelveDataKey: TWELVE_DATA_KEY,
   tradierToken: TRADIER_TOKEN,
-  lastPriceOf: (symbol) => stockHub.lastPriceOf(symbol),
+  lastPriceOf,
   futuresHub,
 }));
 
@@ -267,7 +294,7 @@ app.get('/api/premium', async (req, res) => {
   if (!symbol) return res.status(400).json({ error: 'symbol is required' });
 
   try {
-    const spotPrice = stockHub.lastPriceOf(symbol) || null;
+    const spotPrice = lastPriceOf(symbol) || null;
     const result = await tradierHub.trackSymbol(symbol, spotPrice);
     res.json(result);
   } catch (err) {
@@ -375,13 +402,14 @@ wss.on('connection', (ws) => {
     // ---- price subscription (Finnhub for stocks, Massive for futures) ----
     if (msg.type === 'subscribe_price' && msg.symbol) {
       const symbol = msg.symbol.toUpperCase();
-      if (ws.watchedSymbol) {
-        if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-        else stockHub.unsubscribe(clientId, ws.watchedSymbol);
-      }
+      if (ws.watchedSymbol) priceHubFor(ws.watchedSymbol).unsubscribe(clientId, ws.watchedSymbol);
       ws.watchedSymbol = symbol;
       if (isFuturesTicker(symbol)) {
         futuresHub.subscribe(clientId, symbol);
+      } else if (isIndexSymbol(symbol)) {
+        // The index hub reports its own status to this client as soon as
+        // its first quote arrives (or fails) - no stock-feed status here.
+        indexHub.subscribe(clientId, symbol);
       } else {
         stockHub.subscribe(clientId, symbol);
         // Re-confirm the CURRENT status directly to this client - not just
@@ -400,10 +428,7 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'unsubscribe_price') {
-      if (ws.watchedSymbol) {
-        if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-        else stockHub.unsubscribe(clientId, ws.watchedSymbol);
-      }
+      if (ws.watchedSymbol) priceHubFor(ws.watchedSymbol).unsubscribe(clientId, ws.watchedSymbol);
       ws.watchedSymbol = null;
       return;
     }
@@ -417,7 +442,7 @@ wss.on('connection', (ws) => {
         // exact moment (a timing race after reconnects/resubscribes),
         // which previously caused near-the-money strikes to silently fall
         // back to an arbitrary, unrelated strike.
-        const spotPrice = msg.spotPrice || stockHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
+        const spotPrice = msg.spotPrice || lastPriceOf(msg.symbol.toUpperCase()) || 0;
         const { count, history } = await tradierHub.watch(clientId, msg.symbol.toUpperCase(), msg.expiration, spotPrice);
         // Replay recent history oldest-first, so the frontend's prepend
         // logic ends up with newest-on-top, same as if these had arrived
@@ -439,7 +464,7 @@ wss.on('connection', (ws) => {
     // at once instead of just the one selected in the normal dropdown.
     if (msg.type === 'watch_big_flow' && msg.symbol) {
       try {
-        const spotPrice = msg.spotPrice || stockHub.lastPriceOf(msg.symbol.toUpperCase()) || 0;
+        const spotPrice = msg.spotPrice || lastPriceOf(msg.symbol.toUpperCase()) || 0;
         const { count, history } = await tradierHub.watchBigFlow(clientId, msg.symbol.toUpperCase(), spotPrice);
         history.forEach((event) => sendToClient(clientId, { type: 'flow', ...event }));
         sendToClient(clientId, { type: 'big_flow_watching', symbol: msg.symbol, contractCount: count });
@@ -456,10 +481,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (ws.watchedSymbol) {
-      if (isFuturesTicker(ws.watchedSymbol)) futuresHub.unsubscribe(clientId, ws.watchedSymbol);
-      else stockHub.unsubscribe(clientId, ws.watchedSymbol);
-    }
+    if (ws.watchedSymbol) priceHubFor(ws.watchedSymbol).unsubscribe(clientId, ws.watchedSymbol);
     tradierHub.unwatch(clientId);
     tradierHub.unwatchBigFlow(clientId);
     browserClients.delete(clientId);
