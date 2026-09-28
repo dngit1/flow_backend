@@ -2270,7 +2270,7 @@
       // approach; net flow only changes at most once per qualifying
       // trade, not on every tick, so this isn't a hot path).
       panel.positionNetFlowLabels = function () {
-        if (!isFuturesTicker(panel.symbol) || panel.netFlowByBarTime.size === 0) {
+        if (!panel.flowMarkersVisible || !isFuturesTicker(panel.symbol) || panel.netFlowByBarTime.size === 0) {
           els.netFlowContainer.innerHTML = '';
           return;
         }
@@ -4284,6 +4284,7 @@
       els.flowMarkersToggleCheckbox.addEventListener('change', () => {
         panel.flowMarkersVisible = els.flowMarkersToggleCheckbox.checked;
         panel.applyFlowMarkersVisibility();
+        panel.positionNetFlowLabels();
         saveChartSettings(panel);
       });
 
