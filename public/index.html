@@ -785,13 +785,39 @@
       z-index: 10; /* above the read-only indicator overlays - user's own drawings should never be hidden behind them */
     }
 
-    .drawing-element {
-      pointer-events: auto; /* re-enabled per-element, specifically so a drawing itself can be clicked to select it */
-      cursor: pointer;
+    /* Each drawing is two layers: the visible line (never interactive)
+       and a much wider invisible copy on top of it (the only thing that
+       receives mouse events). A 2px line is nearly impossible to click or
+       drag accurately; a 12px-wide invisible grab area makes it easy while
+       leaving the visible line exactly as thin as before. */
+    .drawing-visual {
+      pointer-events: none;
     }
 
-    .drawing-element.selected {
+    .drawing-visual.selected {
       stroke-width: 3;
+    }
+
+    .drawing-hit {
+      pointer-events: stroke; /* hit-test on the stroke even though it's fully transparent */
+      cursor: move;
+      stroke: rgba(0, 0, 0, 0);
+      stroke-width: 12;
+      fill: none;
+    }
+
+    /* While a creation tool (horizontal line/trend line/fib) is armed,
+       the next clicks must reach the chart to place points - an existing
+       drawing's grab area shouldn't swallow them. */
+    .drawing-svg.tool-armed .drawing-hit {
+      pointer-events: none;
+    }
+
+    .drawing-drag-label {
+      pointer-events: none;
+      fill: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
     }
 
     .drawing-toolbar {
@@ -808,7 +834,7 @@
       padding: 4px;
     }
 
-    .drawing-tool-btn {
+    .drawing-tool-btn, .drawing-action-btn {
       width: 28px;
       height: 28px;
       background-color: transparent;
@@ -822,13 +848,24 @@
       justify-content: center;
     }
 
-    .drawing-tool-btn:hover {
+    .drawing-action-btn {
+      margin-top: 4px; /* small gap separating it from the tool-arming buttons above - it acts on a selected drawing rather than arming a tool */
+      border-top: 1px solid #364153;
+      border-radius: 0 0 4px 4px;
+    }
+
+    .drawing-tool-btn:hover, .drawing-action-btn:hover:not(:disabled) {
       background-color: #2b3548;
     }
 
-    .drawing-tool-btn.active {
+    .drawing-tool-btn.active, .drawing-action-btn.active {
       background-color: #2563eb;
       color: #ffffff;
+    }
+
+    .drawing-action-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
 
     .trendline-upper, .trendline-lower {
@@ -1040,6 +1077,7 @@
           <button class="drawing-tool-btn" data-tool="hline" title="Horizontal Line">&#8213;</button>
           <button class="drawing-tool-btn" data-tool="trendline" title="Trend Line">&#8599;</button>
           <button class="drawing-tool-btn" data-tool="fib" title="Fib Retracement">F</button>
+          <button class="drawing-action-btn" data-action="extend" title="Extend selected trend line to the right (select a trend line first)" disabled>&#8677;</button>
         </div>
         <div class="chart-container"></div>
         <svg class="drawing-svg"></svg>
@@ -1159,6 +1197,7 @@
           <button class="drawing-tool-btn" data-tool="hline" title="Horizontal Line">&#8213;</button>
           <button class="drawing-tool-btn" data-tool="trendline" title="Trend Line">&#8599;</button>
           <button class="drawing-tool-btn" data-tool="fib" title="Fib Retracement">F</button>
+          <button class="drawing-action-btn" data-action="extend" title="Extend selected trend line to the right (select a trend line first)" disabled>&#8677;</button>
         </div>
         <div class="chart-container"></div>
         <svg class="drawing-svg"></svg>
@@ -1344,10 +1383,10 @@
     function saveDrawings(symbol, drawings) {
       try {
         // Strip the 'el'/'els' DOM references before saving - only the
-        // actual data (type, points) is meaningful across a reload; a
-        // reference to a specific DOM element from a previous page load
-        // is meaningless and can't be serialized anyway.
-        const serializable = drawings.map(({ id, type, points }) => ({ id, type, points }));
+        // actual data (type, points, extendRight) is meaningful across a
+        // reload; a reference to a specific DOM element from a previous
+        // page load is meaningless and can't be serialized anyway.
+        const serializable = drawings.map(({ id, type, points, extendRight }) => ({ id, type, points, extendRight }));
         localStorage.setItem(drawingsKey(symbol), JSON.stringify(serializable));
       } catch (e) {
         console.error(`[drawings:${symbol}] failed to save:`, e);
@@ -1701,6 +1740,7 @@
         adaptiveFillLowerEl: root.querySelector('.adaptive-fill-lower'),
         drawingToolbar: root.querySelector('.drawing-toolbar'),
         drawingSvg: root.querySelector('.drawing-svg'),
+        drawingExtendBtn: root.querySelector('.drawing-action-btn[data-action="extend"]'),
         netFlowContainer: root.querySelector('.net-flow-container'),
         candleTimer: root.querySelector('.candle-timer'),
         indicatorToggleBtn: root.querySelector('.indicator-toggle-btn'),
@@ -3337,35 +3377,59 @@
       // recreating them.
       panel.renderDrawings = function () {
         els.drawingSvg.innerHTML = '';
+        const SVG_NS = 'http://www.w3.org/2000/svg';
         for (const drawing of panel.drawings) {
-          drawing.els = [];
+          drawing.els = [];   // every visible element, positional (see positionDrawings)
+          drawing.lines = []; // just the visible lines, in the same order - each has a matching grab line in drawing.hits
+          drawing.hits = [];
           if (drawing.type === 'fib') {
             for (let i = 0; i < FIB_LEVELS.length; i++) {
-              const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+              const line = document.createElementNS(SVG_NS, 'line');
               line.setAttribute('stroke', '#ba68c8');
               line.setAttribute('stroke-width', '1.5');
-              const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+              const label = document.createElementNS(SVG_NS, 'text');
               label.setAttribute('fill', '#ba68c8');
               label.setAttribute('font-size', '11');
               drawing.els.push(line, label);
+              drawing.lines.push(line);
             }
           } else {
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            const line = document.createElementNS(SVG_NS, 'line');
             line.setAttribute('stroke', drawing.type === 'hline' ? '#ffd54f' : '#42a5f5');
             line.setAttribute('stroke-width', '2');
             drawing.els.push(line);
+            drawing.lines.push(line);
           }
 
           for (const el of drawing.els) {
-            el.classList.add('drawing-element');
-            el.addEventListener('click', (e) => {
+            el.classList.add('drawing-visual');
+            els.drawingSvg.appendChild(el);
+          }
+
+          for (let i = 0; i < drawing.lines.length; i++) {
+            const hit = document.createElementNS(SVG_NS, 'line');
+            hit.classList.add('drawing-hit');
+            hit.addEventListener('mousedown', (e) => startDrawingDrag(e, drawing));
+            hit.addEventListener('click', (e) => {
               e.stopPropagation();
               panel.selectDrawing(drawing.id);
             });
-            els.drawingSvg.appendChild(el);
+            els.drawingSvg.appendChild(hit);
+            drawing.hits.push(hit);
           }
         }
+
+        // One shared label, shown only while a horizontal line is being
+        // dragged, so its exact price is readable as it moves.
+        const dragLabel = document.createElementNS(SVG_NS, 'text');
+        dragLabel.classList.add('drawing-drag-label');
+        dragLabel.setAttribute('text-anchor', 'end');
+        dragLabel.style.display = 'none';
+        els.drawingSvg.appendChild(dragLabel);
+        panel.dragLabelEl = dragLabel;
+
         panel.positionDrawings();
+        panel.syncExtendButton();
       };
 
       panel.positionDrawings = function () {
@@ -3391,10 +3455,25 @@
             const y2 = candlestickSeries.priceToCoordinate(drawing.points[1].price);
             const line = drawing.els[0];
             if (x1 == null || y1 == null || x2 == null || y2 == null) { line.style.display = 'none'; continue; }
+
+            let ax = x1, ay = y1, bx = x2, by = y2;
+            if (drawing.extendRight && x1 !== x2) {
+              // Continue the line past its right-most point out to the
+              // chart's right edge, along the same slope. Works whichever
+              // order the two points were clicked in - the left/right
+              // ordering is worked out from their positions, not from
+              // which one was clicked first.
+              const [lx, ly, rx, ry] = x1 < x2 ? [x1, y1, x2, y2] : [x2, y2, x1, y1];
+              const slope = (ry - ly) / (rx - lx);
+              ax = lx; ay = ly;
+              bx = Math.max(width, rx);
+              by = ly + slope * (bx - lx);
+            }
+
             line.style.display = 'block';
             line.classList.toggle('selected', isSelected);
-            line.setAttribute('x1', x1); line.setAttribute('y1', y1);
-            line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+            line.setAttribute('x1', ax); line.setAttribute('y1', ay);
+            line.setAttribute('x2', bx); line.setAttribute('y2', by);
           } else if (drawing.type === 'fib') {
             const x1 = chart.timeScale().timeToCoordinate(drawing.points[0].time);
             const x2 = chart.timeScale().timeToCoordinate(drawing.points[1].time);
@@ -3423,7 +3502,140 @@
             }
           }
         }
+
+        // Second pass: mirror each visible line's geometry onto its
+        // invisible grab line, so the two always sit exactly on top of
+        // each other. Done as a separate pass (rather than inside the
+        // per-type branches above) because those branches use `continue`
+        // to skip hidden lines - this way a hidden line reliably hides
+        // its grab line too, instead of leaving an invisible, clickable
+        // target behind at a stale position.
+        for (const drawing of panel.drawings) {
+          if (!drawing.lines) continue;
+          drawing.lines.forEach((line, i) => {
+            const hit = drawing.hits[i];
+            if (!hit) return;
+            if (line.style.display !== 'block') { hit.style.display = 'none'; return; }
+            hit.style.display = 'block';
+            for (const attr of ['x1', 'y1', 'x2', 'y2']) hit.setAttribute(attr, line.getAttribute(attr));
+          });
+        }
+
+        // Live price readout, only while a horizontal line is actually
+        // being dragged - lets you see (and stop at) an exact price.
+        if (panel.dragLabelEl) {
+          const dragged = (drawingDrag && drawingDrag.moved)
+            ? panel.drawings.find((d) => d.id === drawingDrag.drawingId)
+            : null;
+          if (dragged && dragged.type === 'hline') {
+            const y = candlestickSeries.priceToCoordinate(dragged.points[0].price);
+            if (y == null) {
+              panel.dragLabelEl.style.display = 'none';
+            } else {
+              // Sit just left of the price axis rather than on top of
+              // it - horizontal lines span the whole chart width,
+              // including the axis area.
+              const priceScale = chart.priceScale('right');
+              const axisWidth = (priceScale && typeof priceScale.width === 'function' ? priceScale.width() : 60) || 60;
+              panel.dragLabelEl.style.display = 'block';
+              panel.dragLabelEl.setAttribute('x', width - axisWidth - 8);
+              panel.dragLabelEl.setAttribute('y', y - 6);
+              panel.dragLabelEl.textContent = dragged.points[0].price.toFixed(2);
+            }
+          } else {
+            panel.dragLabelEl.style.display = 'none';
+          }
+        }
       };
+
+      // ---- Moving drawings by dragging them ----
+      // Mousedown on a drawing selects it and starts tracking; movement
+      // under a few pixels is treated as a plain click (so clicking to
+      // select never nudges anything), anything more moves the drawing.
+      // Everything is measured from where the mouse went DOWN and applied
+      // to the drawing's ORIGINAL points, not accumulated tick by tick -
+      // so there's no drift, and dragging back to the start puts it back
+      // exactly where it was.
+      let drawingDrag = null;
+
+      function startDrawingDrag(e, drawing) {
+        if (e.button !== 0) return; // left button only
+        e.preventDefault(); // stop the browser starting a text selection/native drag mid-move
+        e.stopPropagation();
+        panel.selectDrawing(drawing.id);
+
+        const rect = els.chartContainer.getBoundingClientRect();
+        const bars = candlestickSeries.data();
+        drawingDrag = {
+          drawingId: drawing.id,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startX: e.clientX - rect.left, // relative to the chart, the same coordinate space the chart's own conversions use
+          origPoints: drawing.points.map((p) => ({ ...p })),
+          origYs: drawing.points.map((p) => candlestickSeries.priceToCoordinate(p.price)),
+          // Each point's position among the loaded bars (-1 for a point
+          // with no time, like a horizontal line, or a time that isn't
+          // among the loaded bars) - horizontal movement is done in whole
+          // bars, since a point can only be anchored to an actual bar.
+          origIdxs: drawing.points.map((p) => (p.time == null ? -1 : bars.findIndex((b) => b.time === p.time))),
+          moved: false,
+        };
+        document.addEventListener('mousemove', onDrawingDragMove);
+        document.addEventListener('mouseup', endDrawingDrag);
+      }
+
+      function onDrawingDragMove(e) {
+        if (!drawingDrag) return;
+        if (e.buttons === 0) { endDrawingDrag(); return; } // button was released outside the window - don't leave a drag stuck to the cursor
+        const drawing = panel.drawings.find((d) => d.id === drawingDrag.drawingId);
+        if (!drawing) { endDrawingDrag(); return; }
+
+        const dx = e.clientX - drawingDrag.startClientX;
+        const dy = e.clientY - drawingDrag.startClientY;
+        if (!drawingDrag.moved && Math.hypot(dx, dy) < 3) return;
+        drawingDrag.moved = true;
+
+        const bars = candlestickSeries.data();
+
+        // Horizontal shift, in whole bars. Clamped as a group so neither
+        // point can be pushed past the first/last bar - clamping each
+        // point separately would squash the line's shape against the edge.
+        let dBars = 0;
+        const canShiftTime = drawing.type !== 'hline' && drawingDrag.origIdxs.every((i) => i >= 0);
+        if (canShiftTime) {
+          const l0 = chart.timeScale().coordinateToLogical(drawingDrag.startX);
+          const l1 = chart.timeScale().coordinateToLogical(drawingDrag.startX + dx);
+          if (l0 != null && l1 != null) {
+            const minIdx = Math.min(...drawingDrag.origIdxs);
+            const maxIdx = Math.max(...drawingDrag.origIdxs);
+            dBars = Math.max(-minIdx, Math.min((bars.length - 1) - maxIdx, Math.round(l1 - l0)));
+          }
+        }
+
+        drawing.points = drawingDrag.origPoints.map((p, k) => {
+          const next = { ...p };
+          const originalY = drawingDrag.origYs[k];
+          if (originalY != null) {
+            const newPrice = candlestickSeries.coordinateToPrice(originalY + dy);
+            if (newPrice != null) next.price = newPrice;
+          }
+          if (canShiftTime) next.time = bars[drawingDrag.origIdxs[k] + dBars].time;
+          return next;
+        });
+        panel.positionDrawings();
+      }
+
+      function endDrawingDrag() {
+        document.removeEventListener('mousemove', onDrawingDragMove);
+        document.removeEventListener('mouseup', endDrawingDrag);
+        if (!drawingDrag) return;
+        const moved = drawingDrag.moved;
+        drawingDrag = null;
+        if (moved) saveDrawings(panel.symbol, panel.drawings); // only persist when something actually moved
+        panel.positionDrawings(); // also hides the live price label
+      }
+
+      window.addEventListener('blur', endDrawingDrag); // e.g. alt-tabbing away mid-drag
 
       panel.addDrawing = function (type, points) {
         const drawing = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, type, points, els: null };
@@ -3432,28 +3644,56 @@
         saveDrawings(panel.symbol, panel.drawings);
       };
 
+      // The extend button is only meaningful for a selected trend line -
+      // disabled otherwise, and shown as active when that line is
+      // already extended, so its state always reflects what's selected.
+      panel.syncExtendButton = function () {
+        const sel = panel.drawings.find((d) => d.id === panel.selectedDrawingId);
+        const isTrendline = !!sel && sel.type === 'trendline';
+        els.drawingExtendBtn.disabled = !isTrendline;
+        els.drawingExtendBtn.classList.toggle('active', isTrendline && !!sel.extendRight);
+      };
+
+      panel.toggleExtendSelectedTrendline = function () {
+        const sel = panel.drawings.find((d) => d.id === panel.selectedDrawingId);
+        if (!sel || sel.type !== 'trendline') return;
+        sel.extendRight = !sel.extendRight;
+        panel.positionDrawings();
+        panel.syncExtendButton();
+        saveDrawings(panel.symbol, panel.drawings);
+      };
+
+      els.drawingExtendBtn.addEventListener('click', () => panel.toggleExtendSelectedTrendline());
+
       panel.selectDrawing = function (id) {
         panel.selectedDrawingId = id;
         panel.positionDrawings(); // just toggles the .selected class on existing elements, no need to rebuild
+        panel.syncExtendButton();
       };
 
       panel.deselectAllDrawings = function () {
         if (panel.selectedDrawingId == null) return;
         panel.selectedDrawingId = null;
         panel.positionDrawings();
+        panel.syncExtendButton();
       };
 
       panel.deleteSelectedDrawing = function () {
         if (panel.selectedDrawingId == null) return;
         panel.drawings = panel.drawings.filter((d) => d.id !== panel.selectedDrawingId);
         panel.selectedDrawingId = null;
-        panel.renderDrawings();
+        panel.renderDrawings(); // also re-syncs the extend button, see the end of renderDrawings
         saveDrawings(panel.symbol, panel.drawings);
       };
 
       panel.setActiveDrawingTool = function (tool) {
         panel.activeDrawingTool = tool;
         panel.pendingDrawingPoint = null; // switching tools mid-drawing cancels whatever was in progress
+        // While a creation tool is armed, existing drawings' grab areas
+        // are switched off (see .drawing-svg.tool-armed in the CSS) so
+        // they can't swallow the clicks meant to place the new drawing's
+        // points - which matters more now that the grab areas are wide.
+        els.drawingSvg.classList.toggle('tool-armed', tool !== 'cursor');
         for (const btn of els.drawingToolbar.querySelectorAll('.drawing-tool-btn')) {
           btn.classList.toggle('active', btn.dataset.tool === tool);
         }
