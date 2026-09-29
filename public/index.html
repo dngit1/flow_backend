@@ -935,6 +935,8 @@
       pointer-events: none;
       color: #ffffff;
       display: none;
+      opacity: 1;
+      transition: opacity 0.1s ease-out;
     }
   </style>
 
@@ -3014,6 +3016,25 @@
           els.candleTimer.style.display = 'none';
         }
       };
+
+      // The badge is pointer-events:none (so it never blocks clicks on the
+      // chart underneath), which means it can't detect a plain CSS :hover
+      // on itself - the mouse passes straight through it to the chart. Its
+      // own price sits right where the chart's native crosshair price
+      // label appears though, so it covers that label whenever the cursor
+      // is near it. Using the chart's own crosshair position instead:
+      // fade the badge out only while the cursor's price is close to the
+      // badge's own price, so the native label reads through, and restore
+      // it everywhere else on the chart.
+      chart.subscribeCrosshairMove((param) => {
+        if (els.candleTimer.style.display === 'none') return;
+        if (!param.point) { els.candleTimer.style.opacity = '1'; return; } // cursor left the chart - always restore, not just fade
+        const badgeTop = parseFloat(els.candleTimer.style.top);
+        if (!Number.isFinite(badgeTop)) return;
+        const badgeHeight = els.candleTimer.offsetHeight || 16;
+        const nearBadge = param.point.y >= badgeTop - 4 && param.point.y <= badgeTop + badgeHeight + 4;
+        els.candleTimer.style.opacity = nearBadge ? '0' : '1';
+      });
 
       // Finds swing highs/lows over the recent lookback, clusters nearby
       // ones into levels, scores each cluster by touch count (weighted
