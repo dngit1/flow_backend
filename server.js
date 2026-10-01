@@ -169,6 +169,15 @@ const stockHub = createStockHub({
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'price_feed_status', status, detail }));
     }
   },
+  // A SPECIFIC symbol was rejected by the feed (e.g. not a real ticker) -
+  // scoped to just the client(s) watching it, unlike onStatus above. This
+  // used to not exist: every per-symbol rejection fell through to onStatus
+  // instead, flipping EVERY connected browser's badge to "error" even
+  // though their own symbol was working fine - all because of one bad
+  // symbol from an unrelated client.
+  onSymbolRejected: (clientId, symbol) => {
+    sendToClient(clientId, { type: 'price_feed_status', status: 'error', detail: `${symbol} is not a supported symbol` });
+  },
 });
 
 // Live prices for INDEXES (SPX etc.). The stock feed can't supply these -
