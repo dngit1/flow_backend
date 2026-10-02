@@ -424,6 +424,7 @@
 
     .flow-card.call { border-left-color: #00c853; }
     .flow-card.put { border-left-color: #ff5252; }
+    .flow-card.sold { border-left-color: #00e5ff; } /* matches the chart marker's shared color for SOLD trades (addOptionFlowMarker) - overrides .call/.put above since it's declared after them */
 
     .flow-details {
       display: flex;
@@ -434,6 +435,7 @@
     .flow-strike { font-weight: bold; color: #ffffff; }
     .flow-premium { color: #00c853; font-weight: 600; }
     .flow-card.put .flow-premium { color: #ff5252; }
+    .flow-card.sold .flow-premium { color: #00e5ff; }
 
     .indicator-toggle-btn {
       background-color: #2b3548;
@@ -949,7 +951,7 @@
     <label><strong>Layout:</strong></label>
     <select id="layout-select">
       <option value="2">2 Windows</option>
-      <option value="1">1 Window</option>
+      <option value="1" selected>1 Window</option>
     </select>
 
     <label><strong>Stock - Min On Chart:</strong></label>
@@ -1244,6 +1246,7 @@
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
     let FUTURES_CHART_MARKER_FLOOR = parseInt(localStorage.getItem('xnlflow:futuresMarkerFloor'), 10) || 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow. Persisted locally (this is a global setting, not per-panel, unlike the ticker/timeframe/indicator settings) so the choice survives reloads.
+    let LAYOUT_MODE = localStorage.getItem('xnlflow:layoutMode') || '1'; // '1' or '2' windows - same global-setting reasoning as above, so the choice survives reloads. Default is 1 for a first-time visitor with nothing saved yet.
     const CHART_MARKER_MAX = 60;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
@@ -2079,8 +2082,9 @@
 
       panel.renderFlowSidebarCard = function (type, strike, premiumStr, sideLabel, timeStr, expirationLabel, skipCap, deferRender) {
         const isCall = type === 'CALL';
+        const isSold = sideLabel === 'SOLD';
         const card = document.createElement('div');
-        card.className = `flow-card ${isCall ? 'call' : 'put'}${expirationLabel ? ' bigflow' : ''}`;
+        card.className = `flow-card ${isCall ? 'call' : 'put'}${isSold ? ' sold' : ''}${expirationLabel ? ' bigflow' : ''}`;
         card.innerHTML = `
           <div class="flow-details">
             ${expirationLabel ? `<span class="flow-bigflow-tag">ALL EXP &middot; ${expirationLabel}</span>` : ''}
@@ -4621,10 +4625,11 @@
       }
     });
 
-    document.getElementById('layout-select').addEventListener('change', (e) => {
-      const mode = e.target.value;
+    // Shows/hides the second panel and pauses/resumes its updates - shared
+    // between the initial apply-saved-layout step below and the change
+    // listener, so both stay in sync rather than duplicating this logic.
+    function applyLayoutMode(mode) {
       const secondPanelRoot = document.querySelector('[data-panel-index="1"]');
-
       if (mode === '1') {
         secondPanelRoot.classList.add('hidden');
         panels[1].pause();
@@ -4632,12 +4637,31 @@
         secondPanelRoot.classList.remove('hidden');
         panels[1].resume();
       }
+    }
+
+    document.getElementById('layout-select').addEventListener('change', (e) => {
+      const mode = e.target.value;
+      LAYOUT_MODE = mode;
+      localStorage.setItem('xnlflow:layoutMode', mode);
+      applyLayoutMode(mode);
 
       requestAnimationFrame(() => {
         panels[0].centerLastCandle();
         if (mode === '2') panels[1].centerLastCandle();
       });
     });
+
+    // Reflect whatever was actually loaded (a previously-saved layout, or
+    // the 2-window default) in the dropdown, and apply it immediately -
+    // without this, a saved "1 Window" choice would show correctly in the
+    // dropdown's HTML "selected" attribute only on the very first visit,
+    // and the second panel would still be visible/updating underneath
+    // until manually toggled. No recenter here (unlike the change handler
+    // above) - the charts haven't rendered any data yet at this point, so
+    // there's nothing to center; loadInitialSeedData handles that itself
+    // once its data arrives.
+    document.getElementById('layout-select').value = LAYOUT_MODE;
+    applyLayoutMode(LAYOUT_MODE);
 
     document.getElementById('marker-floor-select').addEventListener('change', (e) => {
       CHART_MARKER_PREMIUM_FLOOR = parseInt(e.target.value, 10);
