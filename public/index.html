@@ -1026,10 +1026,6 @@
             Channel (new)
           </label>
           <label class="sr-toggle-row">
-            <input type="checkbox" class="autofib-toggle-checkbox" />
-            Auto Fibonacci (new)
-          </label>
-          <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
           </label>
@@ -1109,7 +1105,6 @@
           <line class="adaptive-lower" />
           <line class="trendline-upper" />
           <line class="trendline-lower" />
-          <g class="autofib-group"></g>
         </svg>
         <div class="net-flow-container"></div>
       </div>
@@ -1149,10 +1144,6 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="adaptive-toggle-checkbox" />
             Channel (new)
-          </label>
-          <label class="sr-toggle-row">
-            <input type="checkbox" class="autofib-toggle-checkbox" />
-            Auto Fibonacci (new)
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1234,7 +1225,6 @@
           <line class="adaptive-lower" />
           <line class="trendline-upper" />
           <line class="trendline-lower" />
-          <g class="autofib-group"></g>
         </svg>
         <div class="net-flow-container"></div>
       </div>
@@ -1427,7 +1417,6 @@
           srEnabled: panel.srEnabled,
           levelsTrendlinesEnabled: panel.pivotZonesEnabled, // combined toggle - pivotZonesEnabled/gmacdEnabled/trendlinesEnabled always stay in sync now, so this one is representative of all three
           adaptiveTrendEnabled: panel.adaptiveTrendEnabled,
-          autoFibEnabled: panel.autoFibEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
           macdEnabled: panel.macdEnabled,
@@ -1722,7 +1711,6 @@
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const initialLevelsTrendlinesEnabled = saved?.levelsTrendlinesEnabled === true; // default OFF - combines what were three separate toggles (Pivot Zones, GMACD, Sloped Trendlines) into one, matching the original Pine script's own combined title
       const initialAdaptiveTrendEnabled = saved?.adaptiveTrendEnabled === true; // default OFF - same reasoning
-      const initialAutoFibEnabled = saved?.autoFibEnabled === true; // default OFF - same reasoning
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
@@ -1766,8 +1754,6 @@
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         levelsTrendlinesToggleCheckbox: root.querySelector('.levels-trendlines-toggle-checkbox'),
         adaptiveToggleCheckbox: root.querySelector('.adaptive-toggle-checkbox'),
-        autofibToggleCheckbox: root.querySelector('.autofib-toggle-checkbox'),
-        autofibGroup: root.querySelector('.autofib-group'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
         flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
@@ -1791,7 +1777,6 @@
       els.srToggleCheckbox.checked = initialSrEnabled;
       els.levelsTrendlinesToggleCheckbox.checked = initialLevelsTrendlinesEnabled;
       els.adaptiveToggleCheckbox.checked = initialAdaptiveTrendEnabled;
-      els.autofibToggleCheckbox.checked = initialAutoFibEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
       els.macdToggleCheckbox.checked = initialMacdEnabled;
@@ -1906,8 +1891,6 @@
         trendlinesEnabled: initialLevelsTrendlinesEnabled,
         adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
         adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
-        autoFibEnabled: initialAutoFibEnabled,
-        autoFib: null, // {points: [{time,price}x2], els: [...]} - the most recent swing pair, set by computeAutoFib
         drawings: [], // {id, type: 'hline'|'trendline'|'fib', points: [{time, price}, ...], el/els} - persisted per-symbol, not per-panel (see saveDrawings/loadDrawings)
         activeDrawingTool: 'cursor', // 'cursor'|'hline'|'trendline'|'fib' - which toolbar button is armed
         pendingDrawingPoint: null, // first click of a two-click tool (trendline/fib), waiting for the second
@@ -2544,41 +2527,6 @@
         panel.trendlineLower = lastLow;
       };
 
-      panel.computeAutoFib = function () {
-        panel.autoFib = null;
-        if (!panel.autoFibEnabled) return;
-
-        const bars = candlestickSeries.data();
-        const L = PIVOT_ZONE_LEFT, R = PIVOT_ZONE_RIGHT; // "smooth" - same lookback as Pivot Zones
-        if (bars.length < L + R + 1) return;
-
-        // Same fractal-pivot scan as computeTrendlines: a bar's high/low
-        // must beat L bars to its left and R bars to its right. Keeps
-        // updating as it scans forward, so by the end lastHigh/lastLow are
-        // each the MOST RECENT pivot of their own type - independently,
-        // so they can be from very different points in time.
-        let lastHigh = null, lastLow = null;
-        for (let i = L; i < bars.length - R; i++) {
-          let isHigh = true, isLow = true;
-          for (let j = i - L; j <= i + R; j++) {
-            if (j === i) continue;
-            if (bars[j].high > bars[i].high) isHigh = false;
-            if (bars[j].low < bars[i].low) isLow = false;
-          }
-          if (isHigh) lastHigh = { time: bars[i].time, price: bars[i].high };
-          if (isLow) lastLow = { time: bars[i].time, price: bars[i].low };
-        }
-        if (!lastHigh || !lastLow) return;
-
-        // Anchor ordered by which swing happened more recently - that's
-        // the move price just made, so the fib reads as a retracement of
-        // it rather than a projection. A new swing of either type simply
-        // replaces this on the next compute; there's no separate
-        // invalidation check for a level being broken in between.
-        const [from, to] = lastHigh.time > lastLow.time ? [lastLow, lastHigh] : [lastHigh, lastLow];
-        panel.autoFib = { points: [from, to] };
-      };
-
       panel.computeAdaptiveTrend = function () {
         panel.adaptiveTrend = null;
         if (!panel.adaptiveTrendEnabled) return;
@@ -2726,10 +2674,6 @@
             panel.computeAdaptiveTrend();
             panel.positionAdaptiveTrend();
           }
-          if (panel.autoFibEnabled) {
-            panel.computeAutoFib();
-            panel.positionAutoFib();
-          }
           panel.positionDrawings();
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
@@ -2769,7 +2713,6 @@
           if (panel.gmacdEnabled) panel.positionGmacdBands();
           if (panel.trendlinesEnabled) panel.positionTrendlines();
           if (panel.adaptiveTrendEnabled) panel.positionAdaptiveTrend();
-          if (panel.autoFibEnabled) panel.positionAutoFib();
           panel.positionDrawings();
         }
 
@@ -2809,7 +2752,6 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
-        panel.positionAutoFib();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
       };
@@ -3208,7 +3150,6 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
-        panel.positionAutoFib();
         panel.positionDrawings();
       };
 
@@ -3447,57 +3388,6 @@
 
         els.adaptiveFillLowerEl.style.display = 'block';
         els.adaptiveFillLowerEl.setAttribute('points', `${x1},${y1Mid} ${x1},${y1Lower} ${width},${y2Lower} ${width},${y2Mid}`);
-      };
-
-      panel.positionAutoFib = function () {
-        // Lazily create the 7 line+label pairs once, on first use, and
-        // reuse them on every later call - same reasoning as everywhere
-        // else in this app: there's only ever one auto-fib at a time, so
-        // recreating DOM nodes on every reposition would be wasteful.
-        if (!panel.autoFibEls) {
-          panel.autoFibEls = [];
-          for (let i = 0; i < FIB_LEVELS.length; i++) {
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('stroke', '#ba68c8');
-            line.setAttribute('stroke-width', '1');
-            line.setAttribute('stroke-dasharray', '3,3'); // dashed, so it reads as a reference level rather than a hard line like trendlines/pivot zones
-            const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            label.setAttribute('fill', '#ba68c8');
-            label.setAttribute('font-size', '10');
-            els.autofibGroup.appendChild(line);
-            els.autofibGroup.appendChild(label);
-            panel.autoFibEls.push({ line, label });
-          }
-        }
-
-        if (!panel.autoFib) {
-          for (const { line, label } of panel.autoFibEls) { line.style.display = 'none'; label.style.display = 'none'; }
-          return;
-        }
-
-        const [from, to] = panel.autoFib.points;
-        const x1 = chart.timeScale().timeToCoordinate(from.time);
-        const x2 = chart.timeScale().timeToCoordinate(to.time);
-        if (x1 == null || x2 == null) {
-          for (const { line, label } of panel.autoFibEls) { line.style.display = 'none'; label.style.display = 'none'; }
-          return;
-        }
-        const leftX = Math.min(x1, x2); // starts where the earlier swing point actually sits, extends to the current right edge below
-
-        for (let i = 0; i < FIB_LEVELS.length; i++) {
-          const level = FIB_LEVELS[i];
-          const price = from.price + (to.price - from.price) * level; // level 0 = the earlier swing's price, level 1 = the later one's
-          const y = candlestickSeries.priceToCoordinate(price);
-          const { line, label } = panel.autoFibEls[i];
-          if (y == null) { line.style.display = 'none'; label.style.display = 'none'; continue; }
-          line.style.display = 'block';
-          line.setAttribute('x1', leftX); line.setAttribute('y1', y);
-          line.setAttribute('x2', width); line.setAttribute('y2', y);
-          label.style.display = 'block';
-          label.setAttribute('x', leftX + 4);
-          label.setAttribute('y', y - 3);
-          label.textContent = `${(level * 100).toFixed(1)}%`;
-        }
       };
 
       // Rebuilds the DOM from scratch (clears the container, recreates
@@ -4122,7 +4012,6 @@
           panel.positionGmacdBands();
           panel.positionTrendlines();
           panel.positionAdaptiveTrend();
-          panel.positionAutoFib();
           panel.positionDrawings();
           panel.positionNetFlowLabels();
         } catch (err) {
@@ -4284,10 +4173,6 @@
         if (panel.adaptiveTrendEnabled) {
           panel.computeAdaptiveTrend();
           panel.positionAdaptiveTrend();
-        }
-        if (panel.autoFibEnabled) {
-          panel.computeAutoFib();
-          panel.positionAutoFib();
         }
         panel.positionDrawings();
         panel.positionNetFlowLabels();
@@ -4611,15 +4496,7 @@
         panel.adaptiveTrendEnabled = els.adaptiveToggleCheckbox.checked;
         panel.computeAdaptiveTrend();
         panel.positionAdaptiveTrend();
-        panel.positionAutoFib();
         panel.positionDrawings();
-        saveChartSettings(panel);
-      });
-
-      els.autofibToggleCheckbox.addEventListener('change', () => {
-        panel.autoFibEnabled = els.autofibToggleCheckbox.checked;
-        panel.computeAutoFib();
-        panel.positionAutoFib();
         saveChartSettings(panel);
       });
 
@@ -4709,7 +4586,6 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
-        panel.positionAutoFib();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
@@ -4726,7 +4602,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionAutoFib(); panel.positionDrawings(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionDrawings(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
