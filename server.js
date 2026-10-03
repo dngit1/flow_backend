@@ -168,6 +168,19 @@ app.post('/auth/logout', async (req, res) => {
   }
 });
 
+// GET /admin/sessions - every currently-active session (email, signed-in
+// time, last activity, device). Restricted to ADMIN_EMAILS (see
+// lib/auth.js) - requireAuth first so requireAdmin has req.user to check.
+app.get('/admin/sessions', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+  try {
+    const sessions = await auth.getAllSessions();
+    res.json({ sessions });
+  } catch (err) {
+    console.error('[auth] /admin/sessions failed:', err.message);
+    res.status(500).json({ error: 'Unable to load sessions' });
+  }
+});
+
 // Track connected browser clients so hubs can push data back to them.
 // clientId -> WebSocket
 const browserClients = new Map();
