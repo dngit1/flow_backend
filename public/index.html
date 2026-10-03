@@ -2774,6 +2774,7 @@
         }
 
         if (!panel.vwapEnabled || panel.interval === '1day') {
+          console.log(`[vwap] panel ${panel.index}: not computing (enabled=${panel.vwapEnabled}, interval=${panel.interval})`); // TEMP DIAGNOSTIC
           panel.vwapSeries.setData([]);
           return;
         }
@@ -2783,6 +2784,7 @@
         // newer request and overwrite it with outdated data.
         const requestToken = `${panel.symbol}:${panel.interval}:${Date.now()}`;
         panel.vwapRequestToken = requestToken;
+        console.log(`[vwap] panel ${panel.index}: fetching for ${panel.symbol} ${panel.interval}`); // TEMP DIAGNOSTIC
 
         let data;
         try {
@@ -2800,7 +2802,11 @@
           if (panel.vwapRequestToken === requestToken) panel.vwapSeries.setData([]);
           return;
         }
-        if (panel.vwapRequestToken !== requestToken) return; // a newer request has since superseded this one
+        if (panel.vwapRequestToken !== requestToken) {
+          console.log(`[vwap] panel ${panel.index}: discarding stale response for ${panel.symbol} ${panel.interval} - a newer request has since been made`); // TEMP DIAGNOSTIC
+          return;
+        }
+        console.log(`[vwap] panel ${panel.index}: got ${data.bars.length} bars back, sessionStartMs=${data.sessionStartMs} (${new Date(data.sessionStartMs).toISOString()})`); // TEMP DIAGNOSTIC
 
         const sessionStartSec = Math.floor(data.sessionStartMs / 1000);
         let sumPV = 0, sumV = 0;
@@ -2813,6 +2819,7 @@
           sumV += volume;
           if (sumV > 0) points.push({ time: bar.time, value: sumPV / sumV });
         }
+        console.log(`[vwap] panel ${panel.index}: plotting ${points.length} point(s)${points.length ? `, last value ${points[points.length - 1].value.toFixed(2)}` : ''}`); // TEMP DIAGNOSTIC
         panel.vwapSeries.setData(points);
       };
 
