@@ -1191,6 +1191,10 @@
             Channel (new)
           </label>
           <label class="sr-toggle-row">
+            <input type="checkbox" class="vwap-toggle-checkbox" />
+            VWAP
+          </label>
+          <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
             Option Volume (stock only)
           </label>
@@ -1309,6 +1313,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="adaptive-toggle-checkbox" />
             Channel (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="vwap-toggle-checkbox" />
+            VWAP
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="volume-profile-toggle-checkbox" checked />
@@ -1596,6 +1604,7 @@
           srEnabled: panel.srEnabled,
           levelsTrendlinesEnabled: panel.pivotZonesEnabled, // combined toggle - pivotZonesEnabled/gmacdEnabled/trendlinesEnabled always stay in sync now, so this one is representative of all three
           adaptiveTrendEnabled: panel.adaptiveTrendEnabled,
+          vwapEnabled: panel.vwapEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
           macdEnabled: panel.macdEnabled,
@@ -1890,6 +1899,7 @@
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const initialLevelsTrendlinesEnabled = saved?.levelsTrendlinesEnabled === true; // default OFF - combines what were three separate toggles (Pivot Zones, GMACD, Sloped Trendlines) into one, matching the original Pine script's own combined title
       const initialAdaptiveTrendEnabled = saved?.adaptiveTrendEnabled === true; // default OFF - same reasoning
+      const initialVwapEnabled = saved?.vwapEnabled === true; // default OFF - same reasoning
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
@@ -1933,6 +1943,7 @@
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         levelsTrendlinesToggleCheckbox: root.querySelector('.levels-trendlines-toggle-checkbox'),
         adaptiveToggleCheckbox: root.querySelector('.adaptive-toggle-checkbox'),
+        vwapToggleCheckbox: root.querySelector('.vwap-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
         flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
@@ -1956,6 +1967,7 @@
       els.srToggleCheckbox.checked = initialSrEnabled;
       els.levelsTrendlinesToggleCheckbox.checked = initialLevelsTrendlinesEnabled;
       els.adaptiveToggleCheckbox.checked = initialAdaptiveTrendEnabled;
+      els.vwapToggleCheckbox.checked = initialVwapEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
       els.macdToggleCheckbox.checked = initialMacdEnabled;
@@ -2070,6 +2082,8 @@
         trendlinesEnabled: initialLevelsTrendlinesEnabled,
         adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
         adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
+        vwapEnabled: initialVwapEnabled,
+        vwapSeries: null, // created lazily on first use via chart.addLineSeries
         drawings: [], // {id, type: 'hline'|'trendline'|'fib', points: [{time, price}, ...], el/els} - persisted per-symbol, not per-panel (see saveDrawings/loadDrawings)
         activeDrawingTool: 'cursor', // 'cursor'|'hline'|'trendline'|'fib' - which toolbar button is armed
         pendingDrawingPoint: null, // first click of a two-click tool (trendline/fib), waiting for the second
@@ -2748,6 +2762,60 @@
         };
       };
 
+      panel.computeVwap = async function () {
+        if (!panel.vwapSeries) {
+          panel.vwapSeries = chart.addLineSeries({
+            color: '#ffffff',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          });
+        }
+
+        if (!panel.vwapEnabled || panel.interval === '1day') {
+          panel.vwapSeries.setData([]);
+          return;
+        }
+
+        // Tagged so a slow, stale response (e.g. from switching tickers
+        // or toggling VWAP off and back on quickly) can't land after a
+        // newer request and overwrite it with outdated data.
+        const requestToken = `${panel.symbol}:${panel.interval}:${Date.now()}`;
+        panel.vwapRequestToken = requestToken;
+
+        let data;
+        try {
+          const res = await fetch(
+            `${BACKEND_HTTP}/api/vwap-bars?symbol=${encodeURIComponent(panel.symbol)}&interval=${encodeURIComponent(panel.interval)}`,
+            { credentials: 'include' }
+          );
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || `status ${res.status}`);
+        } catch (err) {
+          // Expected, not a bug, for an index symbol (no volume data) or
+          // the daily timeframe - the server names the exact reason,
+          // logged once rather than shown as an alarming chart error.
+          console.warn(`[vwap] unavailable for ${panel.symbol} ${panel.interval}: ${err.message}`);
+          if (panel.vwapRequestToken === requestToken) panel.vwapSeries.setData([]);
+          return;
+        }
+        if (panel.vwapRequestToken !== requestToken) return; // a newer request has since superseded this one
+
+        const sessionStartSec = Math.floor(data.sessionStartMs / 1000);
+        let sumPV = 0, sumV = 0;
+        const points = [];
+        for (const bar of data.bars) {
+          if (bar.time < sessionStartSec) continue; // bars before the session start are only fetched as buffer, never plotted
+          const volume = bar.volume || 0;
+          const typicalPrice = (bar.high + bar.low + bar.close) / 3;
+          sumPV += typicalPrice * volume;
+          sumV += volume;
+          if (sumV > 0) points.push({ time: bar.time, value: sumPV / sumV });
+        }
+        panel.vwapSeries.setData(points);
+      };
+
       // Maintains panel.sr15mBars from live ticks, entirely independent of
       // the displayed chart's timeframe/bucket - this is what keeps S/R
       // levels stable across TF switches instead of jumping around. Only
@@ -2858,6 +2926,7 @@
             panel.computeAdaptiveTrend();
             panel.positionAdaptiveTrend();
           }
+          if (panel.vwapEnabled) panel.computeVwap();
           panel.positionDrawings();
         } else {
           // Accumulate the TRUE high/low across every tick this bar has
@@ -4358,6 +4427,7 @@
           panel.computeAdaptiveTrend();
           panel.positionAdaptiveTrend();
         }
+        panel.computeVwap();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
         panel.drawings = loadDrawings(symbol);
@@ -4681,6 +4751,12 @@
         panel.computeAdaptiveTrend();
         panel.positionAdaptiveTrend();
         panel.positionDrawings();
+        saveChartSettings(panel);
+      });
+
+      els.vwapToggleCheckbox.addEventListener('change', () => {
+        panel.vwapEnabled = els.vwapToggleCheckbox.checked;
+        panel.computeVwap();
         saveChartSettings(panel);
       });
 
