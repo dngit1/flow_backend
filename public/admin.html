@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>XNL Flow - Active Sessions</title>
+  <style>
+    body {
+      background-color: #0b0e14;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 32px;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 4px;
+    }
+    p.subtitle {
+      color: #8fa0be;
+      font-size: 13px;
+      margin: 0 0 20px;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    button {
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #364153;
+    }
+    #refreshed-at {
+      color: #8fa0be;
+      font-size: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      text-align: left;
+      color: #8fa0be;
+      font-weight: 600;
+      padding: 8px 10px;
+      border-bottom: 1px solid #1f293d;
+    }
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #1a2232;
+    }
+    tr:hover td {
+      background-color: #131822;
+    }
+    .device-cell {
+      color: #8fa0be;
+      font-size: 12px;
+      max-width: 420px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #message {
+      color: #8fa0be;
+      font-size: 13px;
+    }
+    #message.error {
+      color: #ff5252;
+    }
+  </style>
+</head>
+<body>
+  <h1>Active Sessions</h1>
+  <p class="subtitle">Everyone currently signed in to XNL Flow</p>
+
+  <div class="toolbar">
+    <button id="refresh-btn">Refresh</button>
+    <span id="refreshed-at"></span>
+  </div>
+
+  <div id="message"></div>
+  <table id="sessions-table" style="display: none;">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Signed in</th>
+        <th>Last active</th>
+        <th>Device</th>
+      </tr>
+    </thead>
+    <tbody id="sessions-body"></tbody>
+  </table>
+
+  <script>
+    const BACKEND_HTTP = window.location.origin;
+    const messageEl = document.getElementById('message');
+    const tableEl = document.getElementById('sessions-table');
+    const tbodyEl = document.getElementById('sessions-body');
+    const refreshedAtEl = document.getElementById('refreshed-at');
+
+    // A raw user-agent string is long and mostly noise - this keeps just
+    // enough to tell browsers/devices apart at a glance (e.g. "Chrome on
+    // Mac", "Safari on iPhone") without a full parsing library.
+    function summarizeUserAgent(ua) {
+      if (!ua) return 'Unknown device';
+      let os = 'Unknown OS';
+      if (/iPhone/.test(ua)) os = 'iPhone';
+      else if (/iPad/.test(ua)) os = 'iPad';
+      else if (/Android/.test(ua)) os = 'Android';
+      else if (/Mac OS X/.test(ua)) os = 'Mac';
+      else if (/Windows/.test(ua)) os = 'Windows';
+      else if (/Linux/.test(ua)) os = 'Linux';
+
+      let browser = 'Unknown browser';
+      if (/Edg\//.test(ua)) browser = 'Edge';
+      else if (/OPR\//.test(ua)) browser = 'Opera';
+      else if (/Chrome\//.test(ua)) browser = 'Chrome';
+      else if (/CriOS\//.test(ua)) browser = 'Chrome';
+      else if (/Firefox\//.test(ua)) browser = 'Firefox';
+      else if (/Safari\//.test(ua)) browser = 'Safari';
+
+      return `${browser} on ${os}`;
+    }
+
+    function setMessage(text, isError) {
+      messageEl.textContent = text || '';
+      messageEl.className = isError ? 'error' : '';
+    }
+
+    async function loadSessions() {
+      setMessage('Loading...', false);
+      tableEl.style.display = 'none';
+
+      let res;
+      try {
+        res = await fetch(`${BACKEND_HTTP}/admin/sessions`, { credentials: 'include' });
+      } catch (err) {
+        setMessage(`Can't reach the backend: ${err.message}`, true);
+        return;
+      }
+
+      if (res.status === 401) {
+        setMessage('Not signed in. Sign in at the main site first, then reload this page.', true);
+        return;
+      }
+      if (res.status === 403) {
+        setMessage('This account is not on the admin list.', true);
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMessage(data.error || `Request failed (status ${res.status})`, true);
+        return;
+      }
+
+      const data = await res.json();
+      const sessions = data.sessions || [];
+
+      if (sessions.length === 0) {
+        setMessage('No one is currently signed in.', false);
+        return;
+      }
+
+      setMessage('', false);
+      tbodyEl.innerHTML = '';
+      for (const s of sessions) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${s.email}</td>
+          <td>${new Date(s.created_at).toLocaleString()}</td>
+          <td>${new Date(s.last_seen_at).toLocaleString()}</td>
+          <td class="device-cell" title="${s.user_agent || ''}">${summarizeUserAgent(s.user_agent)}</td>
+        `;
+        tbodyEl.appendChild(tr);
+      }
+      tableEl.style.display = '';
+      refreshedAtEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    }
+
+    document.getElementById('refresh-btn').addEventListener('click', loadSessions);
+    loadSessions();
+  </script>
+</body>
+</html>
