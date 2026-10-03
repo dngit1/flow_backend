@@ -18,7 +18,7 @@ const cache = require('./lib/cache');
 const flowHistory = require('./lib/flowHistory');
 const priceHistory = require('./lib/priceHistory');
 const auth = require('./lib/auth');
-const { sendMagicLinkEmail } = require('./lib/mailer');
+const { sendMagicLinkEmail, sendPasswordResetEmail } = require('./lib/mailer');
 
 const {
   FINNHUB_API_KEY,
@@ -138,6 +138,100 @@ app.get('/auth/magic-link/verify', async (req, res) => {
   } catch (err) {
     console.error('[auth] magic link verify failed:', err.message);
     res.status(500).send('Something went wrong signing you in. Please try again.');
+  }
+});
+
+// POST /auth/password/signup - body: { email, password }. Creates a new
+// account, or adds a password to an existing Google/magic-link account
+// that doesn't have one yet (see auth.signUpWithPassword). Signs the user
+// in immediately on success, same as the other sign-in routes.
+app.post('/auth/password/signup', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
+
+    const user = await auth.signUpWithPassword(email, password);
+    const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
+    evictedSessionIds.forEach(evictSessionConnections);
+
+    auth.setSessionCookie(res, sessionId);
+    res.json({ user: { email: user.email, planStatus: user.plan_status } });
+  } catch (err) {
+    // signUpWithPassword throws specific, user-facing messages (password
+    // too short, email already has a password, etc.) - a 400 shows that
+    // message directly rather than a generic failure.
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /auth/password/login - body: { email, password }.
+app.post('/auth/password/login', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+    const user = await auth.verifyPasswordLogin(email, password);
+    const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
+    evictedSessionIds.forEach(evictSessionConnections);
+
+    auth.setSessionCookie(res, sessionId);
+    res.json({ user: { email: user.email, planStatus: user.plan_status } });
+  } catch (err) {
+    // verifyPasswordLogin throws a specific reason (no account, no
+    // password set, wrong password) - 401 shows it directly.
+    res.status(401).json({ error: err.message });
+  }
+});
+
+// POST /auth/password/forgot - body: { email }. Always responds ok
+// regardless of whether the email has an account, same reasoning as
+// /auth/magic-link/request - this endpoint can't be used to probe which
+// emails are registered.
+app.post('/auth/password/forgot', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
+
+    const token = await auth.createPasswordResetToken(email);
+    const link = `${APP_URL}/reset-password.html?token=${token}`;
+    await sendPasswordResetEmail(email, link);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[auth] password reset request failed:', err.message);
+    res.status(500).json({ error: 'Unable to send reset link right now' });
+  }
+});
+
+// POST /auth/password/reset - body: { token, newPassword }. Signs the
+// user in immediately on success, same as magic-link verify - no need to
+// separately log in right after resetting.
+app.post('/auth/password/reset', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const newPassword = String(req.body?.newPassword || '');
+
+    let user;
+    try {
+      user = await auth.resetPasswordWithToken(token, newPassword);
+    } catch (err) {
+      // resetPasswordWithToken throws only for a too-short new password -
+      // distinct from "invalid/expired token" below, which it signals by
+      // returning null instead of throwing.
+      return res.status(400).json({ error: err.message });
+    }
+    if (!user) return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+
+    const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
+    evictedSessionIds.forEach(evictSessionConnections);
+
+    auth.setSessionCookie(res, sessionId);
+    res.json({ user: { email: user.email, planStatus: user.plan_status } });
+  } catch (err) {
+    console.error('[auth] password reset failed:', err.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
 
