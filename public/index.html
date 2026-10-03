@@ -1104,8 +1104,6 @@
         <button id="login-password-signup-btn" class="login-magic-link-btn secondary">Sign up</button>
       </div>
       <a href="#" id="login-forgot-link" class="login-forgot-link">Forgot password?</a>
-      <div class="login-divider">or</div>
-      <button id="login-magic-link-btn" class="login-magic-link-btn">Email me a sign-in link</button>
       <div id="login-status" class="login-status"></div>
     </div>
   </div>
@@ -5043,29 +5041,6 @@
       });
       googleButtonRendered = true;
     }
-
-    document.getElementById('login-magic-link-btn').addEventListener('click', async () => {
-      const email = document.getElementById('login-email-input').value.trim();
-      if (!email || !email.includes('@')) {
-        setLoginStatus('Enter a valid email address.', 'error');
-        return;
-      }
-      setLoginStatus('Sending link...', '');
-      try {
-        const res = await fetch(`${BACKEND_HTTP}/auth/magic-link/request`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ email }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Request failed');
-        setLoginStatus('Check your email for a sign-in link.', 'success');
-      } catch (err) {
-        console.error('[auth] magic link request failed:', err);
-        setLoginStatus('Something went wrong - please try again.', 'error');
-      }
-    });
 
     async function submitPasswordAuth(endpoint, busyText) {
       const email = document.getElementById('login-email-input').value.trim();
