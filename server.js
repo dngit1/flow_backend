@@ -3,6 +3,7 @@ require('dotenv').config();
 const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const { createFinnhubHub } = require('./lib/finnhubHub');
@@ -16,11 +17,8 @@ const { createFlowBuffer } = require('./lib/flowBuffer');
 const cache = require('./lib/cache');
 const flowHistory = require('./lib/flowHistory');
 const priceHistory = require('./lib/priceHistory');
-// NOTE: auth (lib/auth.js, lib/mailer.js) is intentionally NOT wired in
-// here - this is the deploy-now version, auth requires a working
-// Postgres + Google OAuth setup that hasn't been done yet. The
-// auth-complete version of this file is preserved separately; see
-// server-with-auth.js for reintegration once that setup is ready.
+const auth = require('./lib/auth');
+const { sendMagicLinkEmail } = require('./lib/mailer');
 
 const {
   FINNHUB_API_KEY,
@@ -29,6 +27,8 @@ const {
   TWELVE_DATA_KEY,
   TRADIER_TOKEN,
   MASSIVE_API_KEY,
+  DATABASE_URL,
+  GOOGLE_CLIENT_ID,
   // Which live stock data provider to use - 'finnhub' (default, free,
   // no brokerage account) or 'alpaca' (kept as a fallback; requires
   // ALPACA_KEY + ALPACA_SECRET and a working brokerage login - see the
@@ -40,9 +40,10 @@ const {
   PORT = 3000,
 } = process.env;
 
+const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 const usingAlpaca = STOCK_DATA_PROVIDER === 'alpaca';
 
-const requiredEnvVars = { TWELVE_DATA_KEY, TRADIER_TOKEN, MASSIVE_API_KEY };
+const requiredEnvVars = { TWELVE_DATA_KEY, TRADIER_TOKEN, MASSIVE_API_KEY, DATABASE_URL, GOOGLE_CLIENT_ID };
 if (usingAlpaca) {
   requiredEnvVars.ALPACA_KEY = ALPACA_KEY;
   requiredEnvVars.ALPACA_SECRET = ALPACA_SECRET;
@@ -67,11 +68,130 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(express.json());
+app.use(cookieParser());
+
 app.use(express.static('public')); // serve the frontend HTML/JS from here, see README
+
+// ---------------------------------------------------------------
+// Auth routes. The frontend itself (static files above) is reachable
+// without signing in - that's where the login screen lives. Only the
+// /api routes and the WebSocket connection below actually require it.
+// ---------------------------------------------------------------
+
+// POST /auth/google - body: { idToken } (from Google Identity Services on
+// the frontend). Verifies the token SERVER-SIDE against Google - the
+// frontend's claimed email is never trusted directly.
+app.post('/auth/google', async (req, res) => {
+  try {
+    const { idToken } = req.body || {};
+    if (!idToken) return res.status(400).json({ error: 'idToken is required' });
+
+    const { email, googleId } = await auth.verifyGoogleIdToken(idToken);
+    const user = await auth.findOrCreateUserByEmail(email, googleId);
+    const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
+    evictedSessionIds.forEach(evictSessionConnections);
+
+    auth.setSessionCookie(res, sessionId);
+    res.json({ user: { email: user.email, planStatus: user.plan_status } });
+  } catch (err) {
+    console.error('[auth] Google sign-in failed:', err.message);
+    res.status(401).json({ error: 'Google sign-in failed' });
+  }
+});
+
+// POST /auth/magic-link/request - body: { email }. Always responds ok
+// regardless of whether the email has an existing account, so this
+// endpoint can't be used to probe which emails are registered.
+app.post('/auth/magic-link/request', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
+
+    const token = await auth.createMagicLinkToken(email);
+    const link = `${APP_URL}/auth/magic-link/verify?token=${token}`;
+    await sendMagicLinkEmail(email, link);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[auth] magic link request failed:', err.message);
+    res.status(500).json({ error: 'Unable to send sign-in link right now' });
+  }
+});
+
+// GET /auth/magic-link/verify?token=... - the link the user clicks from
+// their email. One-time use (see auth.consumeMagicLinkToken).
+app.get('/auth/magic-link/verify', async (req, res) => {
+  try {
+    const token = String(req.query.token || '');
+    const email = await auth.consumeMagicLinkToken(token);
+    if (!email) {
+      return res.status(400).send('This sign-in link is invalid or has expired. Please request a new one.');
+    }
+
+    const user = await auth.findOrCreateUserByEmail(email, null);
+    const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
+    evictedSessionIds.forEach(evictSessionConnections);
+
+    auth.setSessionCookie(res, sessionId);
+    res.redirect('/');
+  } catch (err) {
+    console.error('[auth] magic link verify failed:', err.message);
+    res.status(500).send('Something went wrong signing you in. Please try again.');
+  }
+});
+
+// GET /auth/me - the frontend calls this on load to decide whether to show
+// the app or the login screen. Never errors on "not signed in" - that's a
+// normal, expected response ({ user: null }), not a failure.
+app.get('/auth/me', async (req, res) => {
+  try {
+    const sessionId = req.cookies?.[auth.SESSION_COOKIE_NAME];
+    const session = await auth.getSessionFromCookieValue(sessionId);
+    if (!session) return res.json({ user: null });
+    res.json({ user: { email: session.user.email, planStatus: session.user.plan_status } });
+  } catch (err) {
+    console.error('[auth] /auth/me failed:', err.message);
+    res.status(500).json({ error: 'Auth check failed' });
+  }
+});
+
+app.post('/auth/logout', async (req, res) => {
+  try {
+    const sessionId = req.cookies?.[auth.SESSION_COOKIE_NAME];
+    if (sessionId) await auth.deleteSession(sessionId);
+    auth.clearSessionCookie(res);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[auth] logout failed:', err.message);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
 
 // Track connected browser clients so hubs can push data back to them.
 // clientId -> WebSocket
 const browserClients = new Map();
+
+// Separate from browserClients/clientId above - clientId identifies a
+// single WebSocket connection for hub-subscription bookkeeping (unchanged,
+// pre-dates auth); sessionId identifies a logged-in DEVICE and can span
+// reconnects. One session can briefly have multiple live sockets (e.g. two
+// tabs on the same device), so this maps to a Set. Used only to force-close
+// a device's connection(s) when its session gets evicted by a new login
+// elsewhere (see auth.createSession's device-limit eviction).
+const sessionConnections = new Map(); // sessionId -> Set<WebSocket>
+
+function evictSessionConnections(sessionId) {
+  const conns = sessionConnections.get(sessionId);
+  if (!conns) return;
+  for (const ws of conns) {
+    try {
+      ws.send(JSON.stringify({ type: 'session_evicted', reason: 'Logged in from another device' }));
+    } catch (err) { /* socket may already be closing - the terminate() below is what actually matters */ }
+    ws.close(4001, 'Session evicted');
+  }
+  sessionConnections.delete(sessionId);
+}
 
 function sendToClient(clientId, message) {
   const ws = browserClients.get(clientId);
@@ -248,7 +368,7 @@ const futuresHub = createFuturesHub({
   }, // same "large print on the underlying" concept as stocks, same broadcast function
 });
 
-app.use('/api', createDataProxyRouter({
+app.use('/api', auth.requireAuth, createDataProxyRouter({
   twelveDataKey: TWELVE_DATA_KEY,
   tradierToken: TRADIER_TOKEN,
   lastPriceOf,
@@ -258,7 +378,7 @@ app.use('/api', createDataProxyRouter({
 // GET /api/premium-leaderboard - curated-symbol ranking by cumulative
 // option premium traded today. See tradierHub.js for the curated list
 // and the "no full-market scan" limitation.
-app.get('/api/premium-leaderboard', async (req, res) => {
+app.get('/api/premium-leaderboard', auth.requireAuth, async (req, res) => {
   const leaderboard = tradierHub.getLeaderboard();
   if (!leaderboard.ready || !leaderboard.rankings.length) return res.json(leaderboard);
 
@@ -298,7 +418,7 @@ app.get('/api/premium-leaderboard', async (req, res) => {
 // ANY ticker, not just the curated leaderboard list. First check on a new
 // symbol sets up tracking (starts at $0) and returns immediately; premium
 // accumulates from that point forward on future checks.
-app.get('/api/premium', async (req, res) => {
+app.get('/api/premium', auth.requireAuth, async (req, res) => {
   const symbol = String(req.query.symbol || '').toUpperCase();
   if (!symbol) return res.status(400).json({ error: 'symbol is required' });
 
@@ -317,7 +437,7 @@ app.get('/api/premium', async (req, res) => {
 // window (1 day - see lib/flowHistory.js), oldest first. Powers the
 // "Replay" feature: backfills a symbol's full day of flow onto its
 // chart, not just whatever streamed in live while the tab was open.
-app.get('/api/flow-history', async (req, res) => {
+app.get('/api/flow-history', auth.requireAuth, async (req, res) => {
   const symbol = String(req.query.symbol || '').toUpperCase();
   if (!symbol) return res.status(400).json({ error: 'symbol is required' });
 
@@ -334,7 +454,7 @@ app.get('/api/flow-history', async (req, res) => {
 // completed bars for this symbol (futures only for now - see
 // migrations/003_price_history.sql), oldest first, within the 30-day
 // retention window. sinceMs is optional.
-app.get('/api/price-history', async (req, res) => {
+app.get('/api/price-history', auth.requireAuth, async (req, res) => {
   const symbol = String(req.query.symbol || '').toUpperCase();
   const timeframe = String(req.query.timeframe || '1min');
   const sinceMs = req.query.sinceMs ? Number(req.query.sinceMs) : undefined;
@@ -388,13 +508,43 @@ priceHistory.purgeOldPriceBars();
 setInterval(() => priceHistory.purgeOldPriceBars(), 60 * 60_000);
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  // Rejects the upgrade BEFORE the WebSocket handshake completes, rather
+  // than accepting the connection and closing it immediately after - same
+  // cookie-based session check as the REST routes' requireAuth.
+  verifyClient: (info, callback) => {
+    const sessionId = auth.getSessionIdFromCookieHeader(info.req.headers.cookie);
+    auth.getSessionFromCookieValue(sessionId)
+      .then((session) => {
+        if (!session) return callback(false, 401, 'Not signed in');
+        info.req.sessionInfo = session; // read back in the 'connection' handler below - same req object throughout the upgrade
+        callback(true);
+      })
+      .catch((err) => {
+        console.error('[auth] WS verifyClient failed:', err.message);
+        callback(false, 500, 'Auth check failed');
+      });
+  },
+});
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
   const clientId = crypto.randomUUID();
   ws.watchedSymbol = null;
   ws.isAlive = true;
   browserClients.set(clientId, ws);
+
+  // Track this connection under its session, so a device-limit eviction
+  // (see evictSessionConnections) can find and force-close it.
+  const { sessionId } = req.sessionInfo;
+  ws.sessionId = sessionId;
+  let sessionConns = sessionConnections.get(sessionId);
+  if (!sessionConns) {
+    sessionConns = new Set();
+    sessionConnections.set(sessionId, sessionConns);
+  }
+  sessionConns.add(ws);
 
   ws.on('pong', () => { ws.isAlive = true; });
 
@@ -494,6 +644,12 @@ wss.on('connection', (ws) => {
     tradierHub.unwatch(clientId);
     tradierHub.unwatchBigFlow(clientId);
     browserClients.delete(clientId);
+
+    const conns = sessionConnections.get(ws.sessionId);
+    if (conns) {
+      conns.delete(ws);
+      if (conns.size === 0) sessionConnections.delete(ws.sessionId);
+    }
   });
 });
 
