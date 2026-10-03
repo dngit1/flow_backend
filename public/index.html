@@ -1026,6 +1026,34 @@
       background-color: #364153;
     }
 
+    .login-password-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .login-password-row .login-magic-link-btn {
+      margin-bottom: 0;
+    }
+
+    .login-magic-link-btn.secondary {
+      background-color: transparent;
+    }
+
+    .login-forgot-link {
+      display: block;
+      text-align: center;
+      color: #8fa0be;
+      font-size: 12px;
+      text-decoration: none;
+      margin-bottom: 4px;
+    }
+
+    .login-forgot-link:hover {
+      color: #ffffff;
+      text-decoration: underline;
+    }
+
     .login-status {
       margin-top: 14px;
       font-size: 12px;
@@ -1070,6 +1098,13 @@
       <div id="google-signin-button"></div>
       <div class="login-divider">or</div>
       <input type="email" id="login-email-input" class="login-email-input" placeholder="you@example.com" />
+      <input type="password" id="login-password-input" class="login-email-input" placeholder="Password" />
+      <div class="login-password-row">
+        <button id="login-password-login-btn" class="login-magic-link-btn">Log in</button>
+        <button id="login-password-signup-btn" class="login-magic-link-btn secondary">Sign up</button>
+      </div>
+      <a href="#" id="login-forgot-link" class="login-forgot-link">Forgot password?</a>
+      <div class="login-divider">or</div>
       <button id="login-magic-link-btn" class="login-magic-link-btn">Email me a sign-in link</button>
       <div id="login-status" class="login-status"></div>
     </div>
@@ -1377,7 +1412,7 @@
     // OAuth 2.0 Client ID. This is NOT a secret (it's meant to be public,
     // same as it appearing in this file) - the actual verification happens
     // server-side in lib/auth.js using the ID token this produces.
-    const GOOGLE_CLIENT_ID = '74217286551-85f7akn24imijqgl4nt60g0na0nvtit3.apps.googleusercontent.com';
+    const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
 
     // Set true the moment ANY panel's WebSocket reports this device was
     // logged out (a new login elsewhere hit the device limit - see
@@ -5032,8 +5067,72 @@
       }
     });
 
+    async function submitPasswordAuth(endpoint, busyText) {
+      const email = document.getElementById('login-email-input').value.trim();
+      const password = document.getElementById('login-password-input').value;
+      if (!email || !email.includes('@')) {
+        setLoginStatus('Enter a valid email address.', 'error');
+        return;
+      }
+      if (!password) {
+        setLoginStatus('Enter a password.', 'error');
+        return;
+      }
+      setLoginStatus(busyText, '');
+      try {
+        const res = await fetch(`${BACKEND_HTTP}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        startApp();
+      } catch (err) {
+        console.error(`[auth] ${endpoint} failed:`, err);
+        setLoginStatus(err.message || 'Something went wrong - please try again.', 'error');
+      }
+    }
+
+    document.getElementById('login-password-login-btn').addEventListener('click', () => {
+      submitPasswordAuth('/auth/password/login', 'Signing in...');
+    });
+
+    document.getElementById('login-password-signup-btn').addEventListener('click', () => {
+      submitPasswordAuth('/auth/password/signup', 'Creating account...');
+    });
+
+    document.getElementById('login-forgot-link').addEventListener('click', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('login-email-input').value.trim();
+      if (!email || !email.includes('@')) {
+        setLoginStatus('Enter your email address first.', 'error');
+        return;
+      }
+      setLoginStatus('Sending reset link...', '');
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/auth/password/forgot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        setLoginStatus('Check your email for a password reset link.', 'success');
+      } catch (err) {
+        console.error('[auth] password reset request failed:', err);
+        setLoginStatus('Something went wrong - please try again.', 'error');
+      }
+    });
+
     document.getElementById('login-email-input').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') document.getElementById('login-magic-link-btn').click();
+      if (e.key === 'Enter') document.getElementById('login-password-login-btn').click();
+    });
+
+    document.getElementById('login-password-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('login-password-login-btn').click();
     });
 
     document.getElementById('logout-btn').addEventListener('click', async () => {
