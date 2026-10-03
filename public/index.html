@@ -940,12 +940,140 @@
       opacity: 1;
       transition: opacity 0.1s ease-out;
     }
+
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background-color: #0b0e14;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-overlay.hidden {
+      display: none;
+    }
+
+    .login-card {
+      width: 320px;
+      max-width: calc(100vw - 32px);
+      background-color: #131822;
+      border: 1px solid #1f293d;
+      border-radius: 12px;
+      padding: 28px 24px;
+      text-align: center;
+    }
+
+    .login-card h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+
+    .login-card p.subtitle {
+      color: #8fa0be;
+      font-size: 13px;
+      margin: 0 0 20px;
+    }
+
+    #google-signin-button {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .login-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #8fa0be;
+      font-size: 11px;
+      margin: 16px 0;
+    }
+
+    .login-divider::before,
+    .login-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background-color: #1f293d;
+    }
+
+    .login-email-input {
+      width: 100%;
+      box-sizing: border-box;
+      background-color: #1f293d;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+
+    .login-magic-link-btn {
+      width: 100%;
+      background-color: #2b3548;
+      color: #ffffff;
+      border: 1px solid #364153;
+      border-radius: 6px;
+      padding: 9px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .login-magic-link-btn:hover {
+      background-color: #364153;
+    }
+
+    .login-status {
+      margin-top: 14px;
+      font-size: 12px;
+      min-height: 16px;
+    }
+
+    .login-status.error {
+      color: #ff5252;
+    }
+
+    .login-status.success {
+      color: #00c853;
+    }
+
+    .logout-btn {
+      background-color: transparent;
+      color: #8fa0be;
+      border: 1px solid #364153;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .logout-btn:hover {
+      background-color: #1f293d;
+      color: #ffffff;
+    }
   </style>
 
   <!-- Lightweight Charts v4 Standalone -->
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <!-- Google Identity Services - renders the "Sign in with Google" button and issues the ID token our backend verifies -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+
+  <div id="login-overlay" class="login-overlay hidden">
+    <div class="login-card">
+      <h1>XNL Flow</h1>
+      <p class="subtitle">Sign in to continue</p>
+      <div id="google-signin-button"></div>
+      <div class="login-divider">or</div>
+      <input type="email" id="login-email-input" class="login-email-input" placeholder="you@example.com" />
+      <button id="login-magic-link-btn" class="login-magic-link-btn">Email me a sign-in link</button>
+      <div id="login-status" class="login-status"></div>
+    </div>
+  </div>
 
   <div class="global-bar">
     <label><strong>Layout:</strong></label>
@@ -993,6 +1121,8 @@
       <h4>Background Flow - SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, NFLX, AVGO, COIN, PLTR</h4>
       <div id="background-flow-list"></div>
     </div>
+
+    <button id="logout-btn" class="logout-btn">Log out</button>
   </div>
 
   <div class="panels-row">
@@ -1243,6 +1373,19 @@
     const BACKEND_HTTP = window.location.origin;
     const BACKEND_WS = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
+    // From Google Cloud Console -> APIs & Services -> Credentials -> your
+    // OAuth 2.0 Client ID. This is NOT a secret (it's meant to be public,
+    // same as it appearing in this file) - the actual verification happens
+    // server-side in lib/auth.js using the ID token this produces.
+    const GOOGLE_CLIENT_ID = '74217286551-85f7akn24imijqgl4nt60g0na0nvtit3.apps.googleusercontent.com';
+
+    // Set true the moment ANY panel's WebSocket reports this device was
+    // logged out (a new login elsewhere hit the device limit - see
+    // evictSessionConnections in server.js). Checked before every
+    // reconnect attempt below, so an evicted session doesn't just keep
+    // silently reconnecting and getting closed again in a loop.
+    let sessionEvicted = false;
+
     const MIN_FLOW_PREMIUM = 25000;
     let CHART_MARKER_PREMIUM_FLOOR = 50000;
     let FUTURES_CHART_MARKER_FLOOR = parseInt(localStorage.getItem('xnlflow:futuresMarkerFloor'), 10) || 4_000_000; // separate, higher floor for futures large-trade chart markers - server still detects/broadcasts at its own $3M threshold, this only controls what gets a chart arrow. Persisted locally (this is a global setting, not per-panel, unlike the ticker/timeframe/indicator settings) so the choice survives reloads.
@@ -1440,7 +1583,7 @@
     async function fetchHistoricalBars(symbol, interval) {
       let response;
       try {
-        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
+        response = await fetch(`${BACKEND_HTTP}/api/bars?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`, { credentials: 'include' });
       } catch (networkErr) {
         throw new Error(`Can't reach the backend at ${BACKEND_HTTP} - it may be waking up from sleep (Render free tier), try again in a moment`);
       }
@@ -1451,7 +1594,7 @@
     }
 
     async function fetchAllExpirations(symbol) {
-      const response = await fetch(`${BACKEND_HTTP}/api/expirations?symbol=${encodeURIComponent(symbol)}`);
+      const response = await fetch(`${BACKEND_HTTP}/api/expirations?symbol=${encodeURIComponent(symbol)}`, { credentials: 'include' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `Backend error: ${response.status}`);
       if (!data.expirations || data.expirations.length === 0) throw new Error('No expirations returned');
@@ -2005,6 +2148,9 @@
             if (msg.status === 'connected') panel.setStatus('Live', '#1b5e20');
             else if (msg.status === 'error') panel.setStatus(`Feed error: ${msg.detail || ''}`, '#7a1f1f');
             else panel.setStatus('Disconnected');
+          } else if (msg.type === 'session_evicted') {
+            sessionEvicted = true;
+            showLoginOverlay('You were logged out because this account signed in on another device.');
           }
         };
 
@@ -2012,6 +2158,7 @@
         panel.ws.onclose = (closeEvent) => {
           console.warn(`[ws:${panel.symbol}] onclose fired (connect #${panel.wsConnectCount}) code=${closeEvent.code} reason=${closeEvent.reason || 'none'} wasClean=${closeEvent.wasClean}`);
           panel.setStatus('Disconnected');
+          if (sessionEvicted) return; // don't reconnect a session that's been logged out elsewhere
           setTimeout(connectWS, 2000);
         };
       }
@@ -3787,7 +3934,7 @@
           const allExpirations = await fetchAllExpirations(panel.symbol);
           const targetExpirations = allExpirations.slice(0, GEX_EXPIRATION_COUNT);
           const results = await Promise.all(targetExpirations.map((exp) =>
-            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(exp)}`)
+            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(exp)}`, { credentials: 'include' })
               .then((r) => r.json())
               .catch((err) => { console.error(`[gex:${panel.symbol}] chain fetch failed for ${exp}:`, err); return { options: [] }; })
           ));
@@ -3813,7 +3960,7 @@
 
         try {
           const [volumeRes, gexData] = await Promise.all([
-            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`),
+            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`, { credentials: 'include' }),
             panel.fetchGexData(),
           ]);
           const data = await volumeRes.json();
@@ -4242,7 +4389,7 @@
       async function resolveSymbolIfRoot(input) {
         if (!FUTURES_ROOTS.has(input)) return input;
         try {
-          const res = await fetch(`${BACKEND_HTTP}/api/futures-resolve?root=${encodeURIComponent(input)}`);
+          const res = await fetch(`${BACKEND_HTTP}/api/futures-resolve?root=${encodeURIComponent(input)}`, { credentials: 'include' });
           const data = await res.json();
           if (!res.ok || !data.ticker) throw new Error(data.error || 'Resolution failed');
           console.log(`[futures] Resolved ${input} -> ${data.ticker}`);
@@ -4320,7 +4467,7 @@
         const symbol = panel.symbol;
         console.log(`[fetch-test] Requesting /api/flow-history for ${symbol}...`);
         const t0 = performance.now();
-        const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
+        const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`, { credentials: 'include' });
         const fetchDone = performance.now();
         const text = await res.text(); // raw text first, so we can measure size before the (possibly slow) JSON.parse
         const textDone = performance.now();
@@ -4347,7 +4494,7 @@
         }
 
         try {
-          const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`);
+          const res = await fetch(`${BACKEND_HTTP}/api/flow-history?symbol=${encodeURIComponent(symbol)}`, { credentials: 'include' });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
 
@@ -4734,7 +4881,7 @@
       listEl.innerText = 'Loading...';
 
       try {
-        const res = await fetch(`${BACKEND_HTTP}/api/premium-leaderboard`);
+        const res = await fetch(`${BACKEND_HTTP}/api/premium-leaderboard`, { credentials: 'include' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
 
@@ -4796,9 +4943,125 @@
       stopLeaderboardPolling();
     });
 
-    } // end initApp
+    } // end initApp - everything above only runs once /auth/me confirms a signed-in session (see bootstrap below)
 
-    initApp();
+    // ---------------------------------------------------------------
+    // Auth: login overlay, Google Sign-In, magic link, logout, and the
+    // initial session check that decides which of those to show.
+    // ---------------------------------------------------------------
+
+    const loginOverlay = document.getElementById('login-overlay');
+    const loginStatusEl = document.getElementById('login-status');
+    let appStarted = false; // guards against initApp() running twice (e.g. Google callback firing after /auth/me already succeeded)
+
+    function setLoginStatus(message, kind) {
+      loginStatusEl.innerText = message || '';
+      loginStatusEl.className = 'login-status' + (kind ? ' ' + kind : '');
+    }
+
+    // Also used by the session_evicted WS handler above (a hoisted function
+    // declaration, so it's callable from createPanel even though it's
+    // defined later in this same script).
+    function showLoginOverlay(message) {
+      loginOverlay.classList.remove('hidden');
+      if (message) setLoginStatus(message, 'error');
+      renderGoogleButton();
+    }
+
+    function startApp() {
+      if (appStarted) return;
+      appStarted = true;
+      loginOverlay.classList.add('hidden');
+      initApp();
+    }
+
+    async function handleGoogleCredential(response) {
+      setLoginStatus('Signing in...', '');
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/auth/google`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ idToken: response.credential }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sign-in failed');
+        startApp();
+      } catch (err) {
+        console.error('[auth] Google sign-in failed:', err);
+        setLoginStatus('Sign-in failed - please try again.', 'error');
+      }
+    }
+
+    let googleButtonRendered = false;
+    function renderGoogleButton() {
+      if (googleButtonRendered) return;
+      if (!window.google?.accounts?.id) {
+        setTimeout(renderGoogleButton, 300); // GIS script may not have finished loading yet
+        return;
+      }
+      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+      google.accounts.id.renderButton(document.getElementById('google-signin-button'), {
+        theme: 'filled_black',
+        size: 'large',
+        width: 272,
+      });
+      googleButtonRendered = true;
+    }
+
+    document.getElementById('login-magic-link-btn').addEventListener('click', async () => {
+      const email = document.getElementById('login-email-input').value.trim();
+      if (!email || !email.includes('@')) {
+        setLoginStatus('Enter a valid email address.', 'error');
+        return;
+      }
+      setLoginStatus('Sending link...', '');
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/auth/magic-link/request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        setLoginStatus('Check your email for a sign-in link.', 'success');
+      } catch (err) {
+        console.error('[auth] magic link request failed:', err);
+        setLoginStatus('Something went wrong - please try again.', 'error');
+      }
+    });
+
+    document.getElementById('login-email-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('login-magic-link-btn').click();
+    });
+
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      try {
+        await fetch(`${BACKEND_HTTP}/auth/logout`, { method: 'POST', credentials: 'include' });
+      } catch (err) {
+        console.error('[auth] logout failed:', err);
+      }
+      window.location.reload();
+    });
+
+    // Entry point: check whether a session cookie is already valid before
+    // deciding whether to show the app or the login screen. A clicked
+    // magic-link redirects back here with the cookie already set, so this
+    // same check is also what completes that flow.
+    (async function bootstrapAuth() {
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/auth/me`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.user) {
+          startApp();
+          return;
+        }
+      } catch (err) {
+        console.error('[auth] session check failed:', err);
+      }
+      showLoginOverlay();
+    })();
   </script>
 </body>
 </html>
