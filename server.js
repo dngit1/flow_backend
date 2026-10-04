@@ -18,6 +18,7 @@ const cache = require('./lib/cache');
 const flowHistory = require('./lib/flowHistory');
 const priceHistory = require('./lib/priceHistory');
 const auth = require('./lib/auth');
+const adminStats = require('./lib/adminStats');
 const { sendMagicLinkEmail, sendPasswordResetEmail } = require('./lib/mailer');
 
 const {
@@ -267,8 +268,7 @@ app.post('/auth/logout', async (req, res) => {
 // lib/auth.js) - requireAuth first so requireAdmin has req.user to check.
 app.get('/admin/sessions', auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
-    const sessions = await auth.getAllSessions();
-    res.json({ sessions });
+    res.json(await adminStats.buildAdminOverview({ auth, sessionConnections }));
   } catch (err) {
     console.error('[auth] /admin/sessions failed:', err.message);
     res.status(500).json({ error: 'Unable to load sessions' });
@@ -680,8 +680,9 @@ wss.on('connection', (ws, req) => {
 
   // Track this connection under its session, so a device-limit eviction
   // (see evictSessionConnections) can find and force-close it.
-  const { sessionId } = req.sessionInfo;
+  const { sessionId, user } = req.sessionInfo;
   ws.sessionId = sessionId;
+  ws.userId = user.id; // lets the admin page count distinct PEOPLE online, not sockets (see lib/adminStats.js)
   let sessionConns = sessionConnections.get(sessionId);
   if (!sessionConns) {
     sessionConns = new Set();
