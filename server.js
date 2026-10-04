@@ -8,7 +8,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const { createFinnhubHub } = require('./lib/finnhubHub');
 const { createAlpacaHub } = require('./lib/alpacaHub'); // kept as a fallback - see STOCK_DATA_PROVIDER below
-const { createTradierHub } = require('./lib/tradierHub');
+const { createTradierHub, BACKGROUND_FLOW_SYMBOLS } = require('./lib/tradierHub');
 const { createFuturesHub, isFuturesTicker } = require('./lib/futuresHub');
 const { createDataProxyRouter } = require('./lib/dataProxy');
 const { createIndexHub } = require('./lib/indexHub');
@@ -351,6 +351,14 @@ function broadcastBackgroundFlow(payload) {
 // get broadcast to every watching client, which is far too much traffic.
 const STOCK_BLOCK_TRADE_THRESHOLD = 1_000_000; // dollar value
 
+// Background Flow's own thresholds - moved here from index.html (was
+// client-side only) so the exact same check governs both what's
+// broadcast live and what's persisted to flow_events, rather than two
+// separate copies that could silently drift apart.
+const BACKGROUND_FLOW_THRESHOLD_MAJOR = 250_000;
+const BACKGROUND_FLOW_THRESHOLD_OTHER = 150_000;
+const BACKGROUND_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ', 'IWM']);
+
 let currentStockFeedStatus = { status: 'disconnected', detail: null };
 
 // Shared rolling buffer of recent flow events (option flow, big flow, and
@@ -437,7 +445,20 @@ const tradierHub = createTradierHub({
   onFlow: (clientId, flow) => sendToClient(clientId, { type: 'flow', ...flow }),
   flowBuffer,
   onFlowEvent: (event) => flowHistory.recordFlowEvent(event),
-  onBackgroundFlow: (flow) => broadcastBackgroundFlow(flow),
+  onBackgroundFlow: (flow) => {
+    const threshold = BACKGROUND_FLOW_MAJOR_SYMBOLS.has(flow.symbol) ? BACKGROUND_FLOW_THRESHOLD_MAJOR : BACKGROUND_FLOW_THRESHOLD_OTHER;
+    if (flow.premium < threshold) return;
+    broadcastBackgroundFlow(flow);
+    flowHistory.recordFlowEvent({
+      symbol: flow.symbol,
+      assetType: 'background_option', // distinct from the normal 'option' tag - see getFlowHistoryForSymbols
+      side: flow.side,
+      value: flow.premium,
+      optionType: flow.optionType,
+      strike: flow.strike,
+      timeMs: flow.timeMs,
+    });
+  },
 });
 
 const futuresHub = createFuturesHub({
@@ -557,6 +578,19 @@ app.get('/api/flow-history', auth.requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/background-flow-history - recent Background Flow events across
+// all BACKGROUND_FLOW_SYMBOLS at once, so the list can repopulate on page
+// load instead of starting empty after a refresh.
+app.get('/api/background-flow-history', auth.requireAuth, async (req, res) => {
+  try {
+    const events = await flowHistory.getFlowHistoryForSymbols(BACKGROUND_FLOW_SYMBOLS, 'background_option');
+    res.json({ events });
+  } catch (err) {
+    console.error('[background-flow-history] failed:', err.message);
+    res.status(502).json({ error: 'Unable to load background flow history right now' });
+  }
+});
+
 // GET /api/price-history?symbol=XYZ&timeframe=1min&sinceMs=... - saved
 // completed bars for this symbol (futures only for now - see
 // migrations/003_price_history.sql), oldest first, within the 30-day
@@ -592,15 +626,17 @@ futuresHub.initBackgroundWatch().catch((err) => {
   console.error('[startup] Futures background watch init failed:', err.message);
 });
 
-// TEMPORARILY DISABLED - suspected contributor to overall server load
-// (an additional ~1080 watched contracts, plus ~90 chain fetches at
-// startup) around the time stock chart updates and normal flow started
-// acting up. Uncomment to re-enable once that's confirmed resolved and
-// stable; nothing else needs to change; tradierHub.js's implementation
-// is untouched.
-// tradierHub.initBackgroundFlow().catch((err) => {
-//   console.error('[startup] Background flow init failed:', err.message);
-// });
+// Re-enabled at the user's request. It was previously disabled as a
+// SUSPECTED (never confirmed) contributor to server load issues - since
+// then, several real bugs in tradierHub.js's trade handling have been
+// found and fixed (replay-protection for re-delivered trades, a
+// non-numeric-premium guard), either of which could plausibly have been
+// the actual cause. Worth watching server load/stability closely after
+// this deploys, since that original suspicion was never conclusively
+// ruled out either way.
+tradierHub.initBackgroundFlow().catch((err) => {
+  console.error('[startup] Background flow init failed:', err.message);
+});
 
 // 1-day retention for saved flow history - nothing here ever deletes
 // itself automatically, so this has to run on a schedule. Once at
