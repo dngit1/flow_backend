@@ -4992,6 +4992,24 @@
       while (listEl.children.length > BACKGROUND_FLOW_LIST_MAX) listEl.removeChild(listEl.lastChild);
     }
 
+    // Runs once at app start (not gated behind the panel being opened -
+    // see the comment on the WS handler above: this list keeps
+    // accumulating regardless of whether anyone's looking at it) so a
+    // page refresh doesn't lose everything that arrived before it.
+    async function loadBackgroundFlowHistory() {
+      try {
+        const res = await fetch(`${BACKEND_HTTP}/api/background-flow-history`, { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `status ${res.status}`);
+        for (const event of data.events) {
+          renderBackgroundFlowEntry({ symbol: event.symbol, optionType: event.optionType, strike: event.strike, premium: event.value, side: event.side, timeMs: event.timeMs });
+        }
+      } catch (err) {
+        console.error('[background-flow] failed to load saved history:', err);
+      }
+    }
+    loadBackgroundFlowHistory();
+
     async function loadLeaderboard() {
       const listEl = document.getElementById('leaderboard-list');
       listEl.innerText = 'Loading...';
