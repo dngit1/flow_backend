@@ -42,6 +42,28 @@
       color: #8fa0be;
       font-size: 12px;
     }
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 36px;
+      margin-bottom: 18px;
+      min-height: 52px;
+    }
+    .stat-number {
+      font-size: 26px;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+    .stat-label {
+      color: #8fa0be;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .stat-note {
+      color: #8fa0be;
+      font-size: 11px;
+      margin-top: 2px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -87,6 +109,7 @@
     <span id="refreshed-at"></span>
   </div>
 
+  <div id="summary" class="summary"></div>
   <div id="message"></div>
   <table id="sessions-table" style="display: none;">
     <thead>
@@ -106,6 +129,7 @@
     const tableEl = document.getElementById('sessions-table');
     const tbodyEl = document.getElementById('sessions-body');
     const refreshedAtEl = document.getElementById('refreshed-at');
+    const summaryEl = document.getElementById('summary');
 
     // A raw user-agent string is long and mostly noise - this keeps just
     // enough to tell browsers/devices apart at a glance (e.g. "Chrome on
@@ -131,6 +155,51 @@
       return `${browser} on ${os}`;
     }
 
+    // "Signed in" = has at least one active session. Counted as DISTINCT
+    // emails rather than raw rows, so a user who somehow holds more than
+    // one session (the per-user limit is a database value that can be
+    // raised) is still one person, not several.
+    function summarizeSessions(sessions) {
+      const emails = new Set(sessions.map((s) => String(s.email).toLowerCase()));
+      return { users: emails.size, sessions: sessions.length };
+    }
+
+    // Three different questions, three figures:
+    //   Signed up  - every account that exists (from the server)
+    //   Signed in  - accounts holding a session, i.e. not logged out. A
+    //                session lasts until logout or eviction, so this is
+    //                NOT the same as being active.
+    //   Online now - accounts with a live connection this moment (server)
+    // A figure the server didn't send (e.g. this page deployed before the
+    // matching server update) shows a dash rather than a wrong number.
+    // "??" not "||": a genuine 0 must display as 0.
+    function renderSummary(sessions, stats) {
+      const { users, sessions: sessionCount } = summarizeSessions(sessions);
+      summaryEl.textContent = '';
+      const stat = (value, label, note) => {
+        const box = document.createElement('div');
+        box.className = 'stat';
+        const number = document.createElement('div');
+        number.className = 'stat-number';
+        number.textContent = String(value);
+        const caption = document.createElement('div');
+        caption.className = 'stat-label';
+        caption.textContent = label;
+        box.appendChild(number);
+        box.appendChild(caption);
+        if (note) {
+          const noteEl = document.createElement('div');
+          noteEl.className = 'stat-note';
+          noteEl.textContent = note;
+          box.appendChild(noteEl);
+        }
+        summaryEl.appendChild(box);
+      };
+      stat(stats?.totalUsers ?? '–', 'Signed up');
+      stat(users, 'Signed in', sessionCount !== users ? `${sessionCount} active sessions` : '');
+      stat(stats?.onlineUsers ?? '–', 'Online now');
+    }
+
     function setMessage(text, isError) {
       messageEl.textContent = text || '';
       messageEl.className = isError ? 'error' : '';
@@ -138,6 +207,7 @@
 
     async function loadSessions() {
       setMessage('Loading...', false);
+      summaryEl.textContent = '';
       tableEl.style.display = 'none';
 
       let res;
@@ -165,21 +235,34 @@
       const data = await res.json();
       const sessions = data.sessions || [];
 
+      renderSummary(sessions, data.stats);
+
       if (sessions.length === 0) {
         setMessage('No one is currently signed in.', false);
         return;
       }
 
       setMessage('', false);
-      tbodyEl.innerHTML = '';
+      tbodyEl.textContent = '';
       for (const s of sessions) {
+        // Cells are filled with textContent / property assignment, never
+        // by building an HTML string: email and user-agent are values a
+        // visitor controls (password sign-up accepts any text containing
+        // an "@"), so treating them as HTML would let a crafted sign-up
+        // run script in the admin's browser.
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${s.email}</td>
-          <td>${new Date(s.created_at).toLocaleString()}</td>
-          <td>${new Date(s.last_seen_at).toLocaleString()}</td>
-          <td class="device-cell" title="${s.user_agent || ''}">${summarizeUserAgent(s.user_agent)}</td>
-        `;
+        const cell = (text) => {
+          const td = document.createElement('td');
+          td.textContent = text;
+          tr.appendChild(td);
+          return td;
+        };
+        cell(s.email);
+        cell(new Date(s.created_at).toLocaleString());
+        cell(new Date(s.last_seen_at).toLocaleString());
+        const deviceCell = cell(summarizeUserAgent(s.user_agent));
+        deviceCell.className = 'device-cell';
+        deviceCell.title = s.user_agent || '';
         tbodyEl.appendChild(tr);
       }
       tableEl.style.display = '';
