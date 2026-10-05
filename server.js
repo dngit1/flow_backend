@@ -80,6 +80,22 @@ app.use(express.static('public')); // serve the frontend HTML/JS from here, see 
 // /api routes and the WebSocket connection below actually require it.
 // ---------------------------------------------------------------
 
+// Private mode (see "Access control" in lib/auth.js): only ADMIN_EMAILS and
+// ALLOWED_EMAILS get in, unless ACCESS_MODE=open. Every route below that
+// signs someone in or sends them an email checks this FIRST, before it
+// creates an account, sends anything, or issues a session.
+const PRIVATE_SITE_MESSAGE = 'This site is private right now. Ask the owner to add your email.';
+
+// JSON routes: replies 403 and returns true when the email isn't admitted.
+// Blocked attempts are logged (email only) so the owner can see who tried
+// and decide whether to add them.
+function refuseIfNotAllowed(res, email, via) {
+  if (auth.isEmailAllowed(email)) return false;
+  console.log(`[access] blocked ${via} for ${email || '(no email)'}: not on the allowed list`);
+  res.status(403).json({ error: PRIVATE_SITE_MESSAGE });
+  return true;
+}
+
 // POST /auth/google - body: { idToken } (from Google Identity Services on
 // the frontend). Verifies the token SERVER-SIDE against Google - the
 // frontend's claimed email is never trusted directly.
@@ -89,6 +105,7 @@ app.post('/auth/google', async (req, res) => {
     if (!idToken) return res.status(400).json({ error: 'idToken is required' });
 
     const { email, googleId } = await auth.verifyGoogleIdToken(idToken);
+    if (refuseIfNotAllowed(res, email, 'Google sign-in')) return;
     const user = await auth.findOrCreateUserByEmail(email, googleId);
     const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
     evictedSessionIds.forEach(evictSessionConnections);
@@ -109,6 +126,14 @@ app.post('/auth/magic-link/request', async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
 
+    // Not admitted: answer exactly as for anyone else, but create no token
+    // and send no email, so this can't be used to email strangers or to
+    // learn who is on the list.
+    if (!auth.isEmailAllowed(email)) {
+      console.log(`[access] ignored sign-in link request for ${email}: not on the allowed list`);
+      return res.json({ ok: true });
+    }
+
     const token = await auth.createMagicLinkToken(email);
     const link = `${APP_URL}/auth/magic-link/verify?token=${token}`;
     await sendMagicLinkEmail(email, link);
@@ -128,6 +153,12 @@ app.get('/auth/magic-link/verify', async (req, res) => {
     const email = await auth.consumeMagicLinkToken(token);
     if (!email) {
       return res.status(400).send('This sign-in link is invalid or has expired. Please request a new one.');
+    }
+
+    // The link may have been issued while this email was still admitted.
+    if (!auth.isEmailAllowed(email)) {
+      console.log(`[access] blocked sign-in link for ${email}: not on the allowed list`);
+      return res.status(403).send(PRIVATE_SITE_MESSAGE);
     }
 
     const user = await auth.findOrCreateUserByEmail(email, null);
@@ -152,6 +183,8 @@ app.post('/auth/password/signup', async (req, res) => {
     const password = String(req.body?.password || '');
     if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
 
+    if (refuseIfNotAllowed(res, email, 'password sign-up')) return;
+
     const user = await auth.signUpWithPassword(email, password);
     const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
     evictedSessionIds.forEach(evictSessionConnections);
@@ -172,6 +205,8 @@ app.post('/auth/password/login', async (req, res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
     const password = String(req.body?.password || '');
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+    if (refuseIfNotAllowed(res, email, 'password sign-in')) return;
 
     const user = await auth.verifyPasswordLogin(email, password);
     const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
@@ -194,6 +229,13 @@ app.post('/auth/password/forgot', async (req, res) => {
   try {
     const email = String(req.body?.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required' });
+
+    // Not admitted: same answer, but no token and no email (see the
+    // matching comment in /auth/magic-link/request).
+    if (!auth.isEmailAllowed(email)) {
+      console.log(`[access] ignored password reset request for ${email}: not on the allowed list`);
+      return res.json({ ok: true });
+    }
 
     const token = await auth.createPasswordResetToken(email);
     const link = `${APP_URL}/reset-password.html?token=${token}`;
@@ -224,6 +266,9 @@ app.post('/auth/password/reset', async (req, res) => {
       return res.status(400).json({ error: err.message });
     }
     if (!user) return res.status(400).json({ error: 'This reset link is invalid or has expired. Please request a new one.' });
+
+    // The link may have been issued while this email was still admitted.
+    if (refuseIfNotAllowed(res, user.email, 'password reset')) return;
 
     const { sessionId, evictedSessionIds } = await auth.createSession(user.id, req.headers['user-agent']);
     evictedSessionIds.forEach(evictSessionConnections);
@@ -656,6 +701,21 @@ setInterval(() => flowHistory.purgeOldFlowEvents(), 60 * 60_000);
 // Same pattern, 30-day retention instead of 1-day - see priceHistory.js.
 priceHistory.purgeOldPriceBars();
 setInterval(() => priceHistory.purgeOldPriceBars(), 60 * 60_000);
+
+// Private mode housekeeping, once at startup: say which mode we're in, and
+// delete leftover logins belonging to emails that aren't admitted (they
+// would be refused anyway - see getSessionFromCookieValue - but this keeps
+// them from lingering and from inflating the admin page's "Signed in").
+if (auth.accessIsOpen()) {
+  console.log('[access] ACCESS_MODE=open: anyone with an account can use the site');
+} else {
+  console.log(`[access] PRIVATE mode: ${auth.allowedEmails().size} email(s) admitted (ADMIN_EMAILS + ALLOWED_EMAILS)`);
+  auth.purgeDisallowedSessions()
+    .then(({ purged, skipped }) => {
+      if (!skipped) console.log(`[access] removed ${purged} leftover login session(s) belonging to emails that aren't admitted`);
+    })
+    .catch((err) => console.error('[access] purge of disallowed sessions failed:', err.message));
+}
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({
