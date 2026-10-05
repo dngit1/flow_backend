@@ -5119,7 +5119,12 @@
           body: JSON.stringify({ idToken: response.credential }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Sign-in failed');
+        if (!res.ok) {
+          // Show the server's own reason (e.g. the site is private and this
+          // email isn't on the list) instead of a vague failure message.
+          setLoginStatus(data.error || 'Sign-in failed - please try again.', 'error');
+          return;
+        }
         startApp();
       } catch (err) {
         console.error('[auth] Google sign-in failed:', err);
