@@ -626,17 +626,24 @@ futuresHub.initBackgroundWatch().catch((err) => {
   console.error('[startup] Futures background watch init failed:', err.message);
 });
 
-// Re-enabled at the user's request. It was previously disabled as a
-// SUSPECTED (never confirmed) contributor to server load issues - since
-// then, several real bugs in tradierHub.js's trade handling have been
-// found and fixed (replay-protection for re-delivered trades, a
-// non-numeric-premium guard), either of which could plausibly have been
-// the actual cause. Worth watching server load/stability closely after
-// this deploys, since that original suspicion was never conclusively
-// ruled out either way.
-tradierHub.initBackgroundFlow().catch((err) => {
-  console.error('[startup] Background flow init failed:', err.message);
-});
+// DISABLED - this is a subscription-budget problem, not a mystery. Each
+// watched strike is both a call AND a put, so measured with the app's own
+// filterNearTheMoney (not the "~540" figure in tradierHub.js's comment,
+// which is off by 2x):
+//   leaderboard            34 symbols x 40 contracts = 1360
+//   background flow        15 symbols x 72 contracts = 1080
+//   both, de-duplicated                              = ~2260
+// against MAX_TOTAL_CONTRACTS = 1800 (permanent watches are never evicted,
+// so the cap can't help) and the 2406 at which Tradier already rejected the
+// whole stream in production (code 1007 "too many symbols requested").
+// One user's Big Flow watch (up to 240) on top pushes it past that, and
+// every option flow stops for everyone. To bring this back, something has
+// to shrink first (fewer leaderboard strikes/symbols, or fewer background
+// expirations) so permanent watches leave real room for user watches.
+// The button in index.html is hidden to match - change both together.
+// tradierHub.initBackgroundFlow().catch((err) => {
+//   console.error('[startup] Background flow init failed:', err.message);
+// });
 
 // 1-day retention for saved flow history - nothing here ever deletes
 // itself automatically, so this has to run on a schedule. Once at
