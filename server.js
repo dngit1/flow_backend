@@ -19,6 +19,8 @@ const flowHistory = require('./lib/flowHistory');
 const priceHistory = require('./lib/priceHistory');
 const auth = require('./lib/auth');
 const adminStats = require('./lib/adminStats');
+const bandwidthLog = require('./lib/bandwidthLog');
+const { gzipJson } = require('./lib/gzipJson');
 const { sendMagicLinkEmail, sendPasswordResetEmail } = require('./lib/mailer');
 
 const {
@@ -71,6 +73,13 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(cookieParser());
+// Outbound bandwidth is billed past the plan's monthly allowance, so: count what each route sends (logged once an
+// hour - lib/bandwidthLog.js) and compress large JSON replies, chiefly the option chains (lib/gzipJson.js).
+// The counter watches the bytes actually written to the connection, so it reports the compressed size (the order of
+// the two does not matter).
+bandwidthLog.installWsCounter(WebSocket);
+app.use(bandwidthLog.httpMiddleware);
+app.use(gzipJson);
 
 app.use(express.static('public')); // serve the frontend HTML/JS from here, see README
 
@@ -701,6 +710,7 @@ setInterval(() => flowHistory.purgeOldFlowEvents(), 60 * 60_000);
 // Same pattern, 30-day retention instead of 1-day - see priceHistory.js.
 priceHistory.purgeOldPriceBars();
 setInterval(() => priceHistory.purgeOldPriceBars(), 60 * 60_000);
+bandwidthLog.startHourlyReport();
 
 // Private mode housekeeping, once at startup: say which mode we're in, and
 // delete leftover logins belonging to emails that aren't admitted (they
