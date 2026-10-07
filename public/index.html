@@ -40,7 +40,14 @@
     }
 
     .global-bar {
-      position: relative; /* anchor for the leaderboard dropdown */
+      position: relative; /* (the leaderboard dropdowns no longer anchor to this bar - each one anchors to its own button, see .leaderboard-wrap) */
+    }
+
+    /* A button together with its dropdown. The dropdown is positioned against THIS box, so it always opens directly
+       under its own button - wherever the bar has wrapped that button to - and never on top of it. */
+    .leaderboard-wrap {
+      position: relative;
+      display: inline-block;
     }
 
     .leaderboard-btn {
@@ -59,8 +66,9 @@
 
     .leaderboard-panel {
       position: absolute;
-      top: 44px;
-      left: 12px;
+      top: calc(100% + 6px); /* just below the button, with a small gap, so the button stays clickable */
+      left: 0;
+      max-width: calc(100vw - 24px);
       z-index: 50;
       background-color: #131822;
       border: 1px solid #1f293d;
@@ -914,7 +922,7 @@
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       pointer-events: none;
-      background-color: #ffffff;
+      background-color: rgba(255, 255, 255, 0.14); /* faint see-through white: dimmer than the old solid white, and the chart shows through */
       padding: 1px 4px;
       border-radius: 3px;
     }
@@ -1136,23 +1144,27 @@
       <option value="10000000">$10M+</option>
     </select>
 
-    <button id="leaderboard-btn" class="leaderboard-btn">Top Premium</button>
-    <div id="leaderboard-panel" class="leaderboard-panel hidden">
-      <h4>Top Option Premium Today</h4>
-      <div class="leaderboard-header">
-        <span class="leaderboard-rank"></span>
-        <span class="leaderboard-symbol"></span>
-        <span class="leaderboard-call">Calls</span>
-        <span class="leaderboard-put">Puts</span>
+    <div class="leaderboard-wrap">
+      <button id="leaderboard-btn" class="leaderboard-btn">Top Premium</button>
+      <div id="leaderboard-panel" class="leaderboard-panel hidden">
+        <h4>Top Option Premium Today</h4>
+        <div class="leaderboard-header">
+          <span class="leaderboard-rank"></span>
+          <span class="leaderboard-symbol"></span>
+          <span class="leaderboard-call">Calls</span>
+          <span class="leaderboard-put">Puts</span>
+        </div>
+        <div id="leaderboard-list">Loading...</div>
       </div>
-      <div id="leaderboard-list">Loading...</div>
     </div>
 
-    <!-- HIDDEN alongside server.js's disabled initBackgroundFlow() call - with no backend watcher running the panel would just sit empty. Remove style="display:none;" only when that call is re-enabled; change both together. -->
-    <button id="background-flow-btn" class="leaderboard-btn" style="display:none;">Background Flow</button>
-    <div id="background-flow-panel" class="leaderboard-panel hidden">
-      <h4>Background Flow - SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, NFLX, AVGO, COIN, PLTR</h4>
-      <div id="background-flow-list"></div>
+    <!-- HIDDEN alongside server.js's disabled initBackgroundFlow() call - with no backend watcher running the panel would just sit empty. Remove style="display:none;" (on the leaderboard-wrap div below, which holds the button and its panel) only when that call is re-enabled; change both together. -->
+    <div class="leaderboard-wrap" style="display:none;">
+      <button id="background-flow-btn" class="leaderboard-btn">Background Flow</button>
+      <div id="background-flow-panel" class="leaderboard-panel hidden">
+        <h4>Background Flow - SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AMD, NFLX, AVGO, COIN, PLTR</h4>
+        <div id="background-flow-list"></div>
+      </div>
     </div>
 
     <button id="logout-btn" class="logout-btn">Log out</button>
@@ -1438,6 +1450,13 @@
     const CHART_MARKER_MAX = 60;
     const SIDEBAR_FLOW_MAX = 60;
     const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
+    // Chart flow markers (the arrow AND its text label are drawn in one color) are deliberately see-through so the
+    // candles stay clearly visible. 1 = fully solid, lower = dimmer; 0.45 is a good "visible but quiet" level.
+    const FLOW_MARKER_ALPHA = 0.45;
+    const flowMarkerColor = (r, g, b) => `rgba(${r}, ${g}, ${b}, ${FLOW_MARKER_ALPHA})`;
+    const FLOW_COLOR_UP = flowMarkerColor(0, 200, 83);     // green  (same hue as #00c853) - bought calls, bought stock/futures
+    const FLOW_COLOR_DOWN = flowMarkerColor(255, 82, 82);  // red    (same hue as #ff5252) - bought puts, sold stock/futures
+    const FLOW_COLOR_SOLD = flowMarkerColor(0, 229, 255);  // cyan   (same hue as #00e5ff) - sold options
     const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
     const BIG_FLOW_THRESHOLD_OTHER = 150000; // everything else - thinner chains mean a $250k single print is comparatively rare, so this stays lower to actually surface activity
     const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
@@ -2401,7 +2420,7 @@
         // instead of only readable from the marker's text label.
         const position = isSold ? (isCall ? 'aboveBar' : 'belowBar') : (isCall ? 'belowBar' : 'aboveBar');
         const shape = isSold ? (isCall ? 'arrowDown' : 'arrowUp') : (isCall ? 'arrowUp' : 'arrowDown');
-        const color = isSold ? '#00e5ff' : (isCall ? '#00c853' : '#ff5252');
+        const color = isSold ? FLOW_COLOR_SOLD : (isCall ? FLOW_COLOR_UP : FLOW_COLOR_DOWN);
 
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
@@ -2529,7 +2548,7 @@
         panel.flowMarkers.push({
           time: panel.resolveMarkerTime(timestamp),
           position: isBuy ? 'belowBar' : 'aboveBar',
-          color: isBuy ? '#00c853' : '#ff5252',
+          color: isBuy ? FLOW_COLOR_UP : FLOW_COLOR_DOWN,
           shape: isBuy ? 'arrowUp' : 'arrowDown',
           text: isFutures
             ? `${isBuy ? 'B' : 'S'} ${formattedContracts} ${unitLabel}${viaStr} (${formattedVal})`
@@ -5080,12 +5099,26 @@
       leaderboardPollInterval = null;
     }
 
+    // Opens a dropdown directly under its own button (the CSS puts it there). If that would run past the
+    // right edge of the window - a button near the right side - right-align it to the button instead.
+    function keepDropdownOnScreen(panel) {
+      panel.style.left = '0';
+      panel.style.right = 'auto';
+      const r = panel.getBoundingClientRect();
+      if (r.right > window.innerWidth - 8) {
+        panel.style.left = 'auto';
+        panel.style.right = '0';
+      }
+    }
+
     document.getElementById('leaderboard-btn').addEventListener('click', () => {
       const panel = document.getElementById('leaderboard-panel');
       const opening = panel.classList.contains('hidden');
       panel.classList.toggle('hidden');
       if (opening) {
-        loadLeaderboard();
+        keepDropdownOnScreen(panel);
+        // the list fills in after loading and can make the panel wider, so check again once it has
+        loadLeaderboard().finally(() => keepDropdownOnScreen(panel));
         // Refresh every 30s while the panel stays open - underlying
         // premium totals update live on the backend as trades stream in,
         // this just keeps what's on screen from going stale without
@@ -5103,7 +5136,9 @@
     // accumulating in the list regardless of whether the panel is open;
     // this button just shows/hides what's already there.
     document.getElementById('background-flow-btn').addEventListener('click', () => {
-      document.getElementById('background-flow-panel').classList.toggle('hidden');
+      const flowPanel = document.getElementById('background-flow-panel');
+      flowPanel.classList.toggle('hidden');
+      if (!flowPanel.classList.contains('hidden')) keepDropdownOnScreen(flowPanel);
     });
 
     document.getElementById('leaderboard-panel').addEventListener('click', (e) => {
