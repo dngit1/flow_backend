@@ -2315,6 +2315,11 @@
             // page reload. Resending it here alongside the other two
             // fixes that.
             if (!isFuturesTicker(panel.symbol)) panel.sendWS({ type: 'watch_big_flow', symbol: panel.symbol, spotPrice: panel.lastBarPrice });
+            // A stock window gets "Live" back from the server's price_feed_status reply to the re-subscribe above. A
+            // futures window deliberately ignores that message (it describes the STOCK feed - see the handler below),
+            // and only ever set "Live" once, when its chart loaded - so after a dropped connection it stayed
+            // "Disconnected" even though the page had reconnected and the data was flowing again.
+            if (isFuturesTicker(panel.symbol)) panel.setStatus('Live', '#1b5e20');
           }
         };
 
@@ -2396,7 +2401,9 @@
 
       panel.setStatus = function (text, bg) {
         els.statusBadge.innerText = text;
-        if (bg) els.statusBadge.style.backgroundColor = bg;
+        // No color given = the badge's normal neutral look (from the CSS). Previously the old color was kept, so a
+        // window that had been "Live" (green) went on being green while it said "Disconnected".
+        els.statusBadge.style.backgroundColor = bg || '';
       };
 
       panel.showChartError = function (message) {
