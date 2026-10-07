@@ -1169,6 +1169,8 @@
       <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
+        <option value="2min">2m</option>
+        <option value="3min">3m</option>
         <option value="5min">5m</option>
         <option value="15min">15m</option>
         <option value="30min">30m</option>
@@ -1293,6 +1295,8 @@
       <label><strong>TF:</strong></label>
       <select class="timeframe-select">
         <option value="1min" selected>1m</option>
+        <option value="2min">2m</option>
+        <option value="3min">3m</option>
         <option value="5min">5m</option>
         <option value="15min">15m</option>
         <option value="30min">30m</option>
@@ -1437,7 +1441,42 @@
     const BIG_FLOW_THRESHOLD_MAJOR = 250000; // SPY/QQQ - deep enough liquidity that $250k+ single prints happen regularly, still a meaningful "genuinely large" bar
     const BIG_FLOW_THRESHOLD_OTHER = 150000; // everything else - thinner chains mean a $250k single print is comparatively rare, so this stays lower to actually surface activity
     const BIG_FLOW_MAJOR_SYMBOLS = new Set(['SPY', 'QQQ']);
-    const INTERVAL_SECONDS = { '1min': 60, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
+    const INTERVAL_SECONDS = { '1min': 60, '2min': 120, '3min': 180, '5min': 300, '15min': 900, '30min': 1800, '1h': 3600, '1day': 86400 };
+
+    // Live volume for the candle being built. Two kinds of tick feed it:
+    //  - a raw trade tick (stocks, and futures trades): its size is ADDED;
+    //  - a per-minute aggregate (futures): carries that ONE minute's volume,
+    //    and repeats with a growing figure while the minute is still forming.
+    // On a 1-minute chart a candle IS one minute, so the aggregate's volume is
+    // the candle's volume. On a longer candle (2m, 3m, 5m ...) the candle
+    // holds several minutes, so each minute's volume has to be added to the
+    // minutes before it - otherwise the candle's volume bar shows only the
+    // latest minute and looks far too small next to the history candles.
+    //  state       - the panel (uses currentBarVolume, volBucket, volMinute, volBase)
+    //  bucketTime  - start time (s) of the candle this tick belongs to
+    //  isNewBucket - this tick opened a new candle
+    //  timeMs      - tick time (an aggregate carries its minute's START time)
+    // Returns the candle's volume so far.
+    function nextLiveVolume(state, bucketTime, isNewBucket, timeMs, tradeSize, aggVolume) {
+      const minute = Math.floor(timeMs / 60000);
+      const current = state.currentBarVolume || 0;
+      if (isNewBucket || state.volBucket !== bucketTime) {
+        state.volBucket = bucketTime;
+        state.volMinute = minute;
+        // A new candle starts from nothing. The first tick after loading history
+        // lands in a candle history already seeded with some volume: keep it.
+        state.volBase = isNewBucket ? 0 : Math.max(0, current - (aggVolume != null ? aggVolume : 0));
+      } else if (minute > state.volMinute) {
+        // A new minute began inside the same candle: what's counted so far is now the base.
+        state.volMinute = minute;
+        state.volBase = current;
+      }
+      if (aggVolume != null) {
+        if (minute < state.volMinute) return current; // a late aggregate for an earlier minute - already counted
+        return state.volBase + aggVolume;
+      }
+      return isNewBucket ? (tradeSize || 0) : current + (tradeSize || 0);
+    }
 
     // Support/resistance: swing-high/low ("fractal") clustering, computed
     // from a FIXED 15-minute bar series maintained independently of
@@ -2907,7 +2946,7 @@
           // carries the bar's own authoritative running total (use it
           // directly); a raw trade tick only knows about itself, so start
           // the accumulator at this one trade's size.
-          panel.currentBarVolume = aggVolume != null ? aggVolume : (tradeSize || 0);
+          panel.currentBarVolume = nextLiveVolume(panel, currentMinuteBucket, true, timeMs, tradeSize, aggVolume);
           candlestickSeries.update({
             time: currentMinuteBucket, open: panel.lastBarOpen, high: panel.currentBarHigh, low: panel.currentBarLow, close: tradePrice,
           });
@@ -2945,7 +2984,7 @@
           // Same as above: an Aggregates snapshot REPLACES the running
           // total (it already reflects everything up to now), a raw trade
           // tick only ever ADDS its own size to what's already there.
-          panel.currentBarVolume = aggVolume != null ? aggVolume : (panel.currentBarVolume || 0) + (tradeSize || 0);
+          panel.currentBarVolume = nextLiveVolume(panel, currentMinuteBucket, false, timeMs, tradeSize, aggVolume);
           candlestickSeries.update({
             time: panel.lastBarTime,
             open: panel.lastBarOpen,
