@@ -1566,9 +1566,28 @@
     }
 
     let flowMeasureCtx = null;
+    const flowTextWidths = new Map(); // the same few label texts come up again and again
     function measureFlowText(text) {
-      if (!flowMeasureCtx) { flowMeasureCtx = document.createElement('canvas').getContext('2d'); flowMeasureCtx.font = FLOW_LABEL_FONT; }
-      return Math.ceil(flowMeasureCtx.measureText(text).width) + 4;
+      let w = flowTextWidths.get(text);
+      if (w === undefined) {
+        if (!flowMeasureCtx) { flowMeasureCtx = document.createElement('canvas').getContext('2d'); flowMeasureCtx.font = FLOW_LABEL_FONT; }
+        w = Math.ceil(flowMeasureCtx.measureText(text).width) + 4;
+        if (flowTextWidths.size > 2000) flowTextWidths.clear();
+        flowTextWidths.set(text, w);
+      }
+      return w;
+    }
+    // The candle with exactly this time (bars are in time order), or null. A binary search, because this runs on
+    // every live tick and building a lookup table of every bar each time was needless work.
+    function findBarByTime(bars, time) {
+      let lo = 0, hi = bars.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const t = bars[mid].time;
+        if (t === time) return bars[mid];
+        if (t < time) lo = mid + 1; else hi = mid - 1;
+      }
+      return null;
     }
     function escapeFlowText(text) {
       return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -2578,28 +2597,55 @@
       };
 
       // Draws the flow markers: one arrow per candle and side on the chart itself, plus the stacked labels.
+      panel.flowMarkersVersion = 0;      // goes up whenever the list of flow markers changes
+      panel.flowGroupsCache = null;      // groupFlowMarkers(...) for the current version
+      panel.flowLabelSignature = '';     // what is on screen right now, so an overlay that has not moved is not rebuilt
+      panel.flowLabelFramePending = false;
+
       panel.renderFlowMarkers = function () {
         candlestickSeries.setMarkers([]); // the arrows and labels are our own overlay now (positionFlowLabels), the chart draws none
+        panel.flowMarkersVersion++;
+        panel.flowGroupsCache = null;
         panel.positionFlowLabels();
       };
 
       // Pixel positions depend on the visible range and price scale, so this also runs on every pan / zoom / resize
-      // (it is called from the top of positionNetFlowLabels, which every one of those paths already calls).
-      panel.positionFlowLabels = function () {
+      // (it is called from the top of positionNetFlowLabels, which every one of those paths already calls) - AND on
+      // every live price tick. So it works out where everything would go (cheap), and only rebuilds the overlay
+      // if that differs from what is already drawn. A tick that moves something (e.g. the forming candle's high
+      // shifts the price scale) is redrawn at most once per animation frame (fromTick), so a burst of ticks costs
+      // one redraw, not one each; pan / zoom / resize / new markers redraw straight away so the overlay never lags
+      // the chart.
+      panel.positionFlowLabels = function (fromTick) {
         const container = els.flowLabelContainer;
         if (!container) return;
-        if (!panel.flowMarkersVisible || panel.flowMarkers.length === 0) { container.innerHTML = ''; return; }
+        if (!panel.flowMarkersVisible || panel.flowMarkers.length === 0) {
+          if (panel.flowLabelSignature !== '') { container.innerHTML = ''; panel.flowLabelSignature = ''; }
+          return;
+        }
         const width = els.chartContainer.clientWidth || 0;
         const height = els.chartContainer.clientHeight || 0;
-        const barByTime = new Map(candlestickSeries.data().map((b) => [b.time, b]));
+        const bars = candlestickSeries.data();
+        if (!panel.flowGroupsCache) panel.flowGroupsCache = groupFlowMarkers(panel.flowMarkers);
+        const timeScale = chart.timeScale();
         const groups = [];
-        for (const g of groupFlowMarkers(panel.flowMarkers)) {
-          const bar = barByTime.get(g.time);
+        let signature = `${panel.flowMarkersVersion}|${width}x${height}`;
+        for (const g of panel.flowGroupsCache) {
+          const bar = findBarByTime(bars, g.time);
           if (!bar) continue; // candle has scrolled out of the loaded data - nothing to anchor to
-          const x = chart.timeScale().timeToCoordinate(g.time);
+          const x = timeScale.timeToCoordinate(g.time);
           const y = candlestickSeries.priceToCoordinate(g.position === 'aboveBar' ? bar.high : bar.low);
           if (x == null || y == null || x < -150 || x > width + 150) continue;
           groups.push({ x, anchorY: y, direction: g.position === 'aboveBar' ? 'up' : 'down', items: g.items });
+          signature += `|${g.time}${g.position === 'aboveBar' ? 'a' : 'b'}${Math.round(x * 10)},${Math.round(y * 10)}`;
+        }
+        if (signature === panel.flowLabelSignature) return; // nothing the overlay shows has moved
+        if (fromTick) {
+          if (!panel.flowLabelFramePending) {
+            panel.flowLabelFramePending = true;
+            requestAnimationFrame(() => { panel.flowLabelFramePending = false; panel.positionFlowLabels(); });
+          }
+          return;
         }
         const html = [];
         for (const g of groups) {
@@ -2612,6 +2658,7 @@
           html.push(`<div class="flow-label" style="left:${Math.round(l.left)}px; top:${Math.round(l.top)}px; color:${l.color};">${escapeFlowText(l.text)}</div>`);
         }
         container.innerHTML = html.join('');
+        panel.flowLabelSignature = signature;
       };
 
       // Large trades on the underlying STOCK's shares (not options) -
@@ -2729,8 +2776,8 @@
       // call rather than diffing individual labels (simplest correct
       // approach; net flow only changes at most once per qualifying
       // trade, not on every tick, so this isn't a hot path).
-      panel.positionNetFlowLabels = function () {
-        panel.positionFlowLabels(); // the chart's flow labels move with the same triggers as the net-flow numbers
+      panel.positionNetFlowLabels = function (fromTick) {
+        panel.positionFlowLabels(fromTick); // the chart's flow labels move with the same triggers as the net-flow numbers
         if (!panel.flowMarkersVisible || !isFuturesTicker(panel.symbol) || panel.netFlowByBarTime.size === 0) {
           els.netFlowContainer.innerHTML = '';
           return;
@@ -3235,7 +3282,7 @@
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
         panel.positionDrawings();
-        panel.positionNetFlowLabels();
+        panel.positionNetFlowLabels(true); // fromTick: a redraw that a tick causes is batched to one per frame
       };
 
       panel.wallRefreshTimer = null;
