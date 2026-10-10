@@ -1900,6 +1900,46 @@
     // charting platform) - needs `period` bars just to seed the first
     // average, so the line starts partway into the visible history, same
     // as MA200 did before it was removed.
+    // ---- repairing live-built candles with the consolidated ones ----
+    // A stock's live candles are built from the trades that stream in, and that stream is IEX-only (Alpaca's free
+    // feed): a few percent of the real volume. A minute where IEX printed once is a flat dash, a minute where it
+    // printed nothing has NO candle, and volume is a fraction of the real figure - while the history loaded when the
+    // page opened (Twelve Data, all exchanges) is complete, which is why the older candles look right and the newer ones
+    // look broken. This takes the chart's current candles (with their volume) and a fresh copy of that consolidated
+    // history, and returns the chart's candles with every FINISHED candle brought up to the consolidated numbers:
+    //  - a candle still in progress (it ends after "now") is left to the live ticks
+    //  - a candle the chart is missing is filled in
+    //  - open and close come from the consolidated bar (the true first / last trade of the minute)
+    //  - high, low and volume never go DOWN: a real print that streamed in live is never thrown away just because the
+    //    consolidated copy was fetched a moment before it was final
+    //  - anything older than the chart's first candle, or with unusable numbers, is ignored
+    function mergeConsolidatedBars(chartBars, consolidatedBars, nowSec, intervalSeconds, settleSeconds = 2) {
+      if (!chartBars.length || !consolidatedBars.length) return { merged: chartBars, changed: 0 };
+      const firstTime = chartBars[0].time;
+      const byTime = new Map(chartBars.map((b) => [b.time, b]));
+      const usable = (n) => Number.isFinite(n) && n > 0;
+      let changed = 0;
+      // one consolidated candle per time (if a time were ever listed twice, the last one wins) - otherwise which one
+      // ends up on the chart would depend on the order they happen to be applied in
+      for (const c of new Map(consolidatedBars.map((b) => [b.time, b])).values()) {
+        if (c.time < firstTime) continue;
+        if (c.time + intervalSeconds > nowSec - settleSeconds) continue;
+        if (!usable(c.open) || !usable(c.high) || !usable(c.low) || !usable(c.close)) continue;
+        const live = byTime.get(c.time);
+        const next = {
+          time: c.time,
+          open: c.open,
+          high: live ? Math.max(c.high, live.high) : c.high,
+          low: live ? Math.min(c.low, live.low) : c.low,
+          close: c.close,
+          volume: Math.max(c.volume || 0, live ? live.volume || 0 : 0),
+        };
+        const differs = !live || live.open !== next.open || live.high !== next.high || live.low !== next.low || live.close !== next.close || (live.volume || 0) !== next.volume;
+        if (differs) { byTime.set(c.time, next); changed++; }
+      }
+      return { merged: changed ? [...byTime.values()].sort((a, b) => a.time - b.time) : chartBars, changed };
+    }
+
     function computeRSI(bars, period) {
       if (bars.length <= period) return [];
       const points = [];
@@ -4587,9 +4627,93 @@
         }
       };
 
+      // ---- keep the live candles honest: once a minute, repair finished candles from the consolidated history ----
+      // See mergeConsolidatedBars for why. Stocks and indexes only: a futures candle is built from every trade
+      // (and its history comes from the same exchange), so there is nothing to repair. Costs one /api/bars request a
+      // minute per open window - the server already caches that answer for 20 seconds.
+      const BAR_RESYNC_OFFSET_MS = 8000; // a few seconds into each minute, so the minute that just ended has been published
+      panel.barResyncTimer = null;
+      panel.barResyncInFlight = false;
+
+      panel.applyRepairedBars = function (merged) {
+        // candlestickSeries.update() cannot change an older candle (the chart library refuses), so the repaired
+        // series is set whole - the same steps the initial load takes, minus re-centring the view. The view is put
+        // back exactly where it was, in case setData disturbs it.
+        const ts = chart.timeScale();
+        const scrollPos = ts.scrollPosition ? ts.scrollPosition() : null;
+        candlestickSeries.setData(merged.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+        volumeSeries.setData(merged.map((b) => ({
+          time: b.time,
+          value: b.volume || 0,
+          color: b.close >= b.open ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
+        })));
+        panel.closeHistory = merged.map((b) => ({ time: b.time, close: b.close }));
+        rsiSeries.setData(computeRSI(merged, RSI_PERIOD));
+        panel.updateMacd(merged);
+        panel.recomputeAllIndicators();
+        if (scrollPos !== null) ts.scrollToPosition(scrollPos, false);
+        // the candle the live ticks are building, if it was one of the repaired ones, carries its repaired numbers forward
+        const last = merged[merged.length - 1];
+        if (last.time === panel.lastBarTime) {
+          panel.lastBarOpen = last.open;
+          panel.currentBarHigh = last.high;
+          panel.currentBarLow = last.low;
+          panel.currentBarVolume = last.volume || 0;
+        }
+        if (panel.pivotZonesEnabled) { panel.computePivotZones(); panel.positionPivotZones(); }
+        if (panel.gmacdEnabled) { panel.computeGMACD(); panel.positionGmacdBands(); }
+        if (panel.trendlinesEnabled) { panel.computeTrendlines(); panel.positionTrendlines(); }
+        if (panel.adaptiveTrendEnabled) { panel.computeAdaptiveTrend(); panel.positionAdaptiveTrend(); }
+        if (panel.vwapEnabled) panel.computeVwap();
+        panel.positionDrawings();
+        panel.positionNetFlowLabels();
+      };
+
+      panel.resyncRecentBars = async function () {
+        if (!panel.hasLoadedOnce || !panel.active || panel.barResyncInFlight || document.hidden) return;
+        const symbol = panel.symbol;
+        const interval = panel.interval;
+        if (!symbol || isFuturesTicker(symbol) || !(panel.intervalSeconds <= 3600)) return;
+        panel.barResyncInFlight = true;
+        try {
+          const result = await fetchHistoricalBars(symbol, interval);
+          if (panel.symbol !== symbol || panel.interval !== interval || panel.barsSymbol !== symbol || panel.barsInterval !== interval) return; // the user moved on (or the chart is mid-load) while this was fetching
+          const volumes = new Map(volumeSeries.data().map((v) => [v.time, v.value]));
+          const chartBars = candlestickSeries.data().map((b) => ({ ...b, volume: volumes.get(b.time) || 0 }));
+          const { merged, changed } = mergeConsolidatedBars(chartBars, result.bars, Date.now() / 1000, panel.intervalSeconds);
+          if (changed > 0) panel.applyRepairedBars(merged);
+        } catch (err) {
+          console.warn(`[resync:${symbol}] skipped this round:`, err.message); // never shown as an error: the live candles are still there
+        } finally {
+          panel.barResyncInFlight = false;
+        }
+      };
+
+      panel.stopBarResync = function () {
+        if (panel.barResyncTimer) clearTimeout(panel.barResyncTimer);
+        panel.barResyncTimer = null;
+      };
+
+      panel.startBarResync = function () {
+        panel.stopBarResync();
+        if (!panel.symbol || isFuturesTicker(panel.symbol)) return;
+        const schedule = () => {
+          const now = Date.now();
+          const wait = (Math.floor(now / 60000) + 1) * 60000 + BAR_RESYNC_OFFSET_MS - now;
+          panel.barResyncTimer = setTimeout(async () => { await panel.resyncRecentBars(); schedule(); }, wait);
+        };
+        schedule();
+        if (!panel.barResyncVisibilityHooked) {
+          panel.barResyncVisibilityHooked = true;
+          document.addEventListener('visibilitychange', () => { if (!document.hidden) panel.resyncRecentBars(); }); // a tab that was in the background catches up straight away
+        }
+      };
+
       panel.loadInitialSeedData = async function (symbol) {
         const previousSymbol = panel.symbol;
         panel.symbol = symbol;
+        panel.stopBarResync();
+        panel.barsSymbol = null; // until this load's candles are on the chart, nothing there belongs to `symbol` - see resyncRecentBars
 
         panel.sendWS({ type: 'unwatch_flow' });
         panel.pendingWatchExpiration = null;
@@ -4656,6 +4780,8 @@
             color: b.close >= b.open ? 'rgba(0, 200, 83, 0.5)' : 'rgba(255, 82, 82, 0.5)',
           })));
           panel.closeHistory = seedCandles.map((b) => ({ time: b.time, close: b.close }));
+          panel.barsSymbol = symbol; // the candles on the chart now belong to this symbol and timeframe
+          panel.barsInterval = panel.interval;
           rsiSeries.setData(computeRSI(seedCandles, RSI_PERIOD));
           panel.updateMacd(seedCandles);
           // Recompute whatever indicators the user has added, against
@@ -4710,6 +4836,7 @@
         panel.selectedDrawingId = null;
         panel.renderDrawings();
         panel.hasLoadedOnce = true;
+        panel.startBarResync();
         // TEMPORARY: Replay confirmed freezing the tab for stock tickers
         // (root cause not yet found - it works fine for futures, which
         // goes through a different code path). Disabled specifically for
