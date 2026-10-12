@@ -1731,7 +1731,8 @@
     const ICT_ATR_LEN = 14;
     const ICT_MIN_GAP_ATR = 0.3333; // a gap smaller than this many ATR is ignored
     const ICT_MAX_GAP_ATR = 2.0;    // ...and one larger than this
-    const ICT_GAP_LIFE = 100;       // candles a gap is watched for before it stops growing
+    const ICT_GAP_LIFE = 30;        // candles a gap is watched for; after that it is dropped (an old gap says little about where price goes now)
+    const ICT_MAX_DIST_ATR = 4;     // a gap further than this many ATR from the latest close is not drawn
     const ICT_MAX_ZONES = 6;        // most gaps watched at once (of each kind); the oldest are dropped
     const ICT_BODY_AVG = 5;         // a gap only counts if the middle candle is a strong 'displacement' candle: body bigger than the average of this many
     const ICT_MIN_BODY_FRAC = 0.6;  // ...and mostly body (body at least this share of its high-low range)
@@ -1877,6 +1878,11 @@
       }
 
       // gaps still being watched run to the newest closed candle
+      const lastAtr = lastBi >= 0 ? atr[lastBi] : null;
+      const lastClose = lastBi >= 0 ? bars[lastBi].close : null;
+      const near = (z) => lastAtr === null || Math.max(z.bottom - lastClose, lastClose - z.top, 0) <= ICT_MAX_DIST_ATR * lastAtr;
+      fvgs = fvgs.filter(near);
+      ifvgs = ifvgs.filter(near);
       for (const z of fvgs) z.end = lastBi;
       for (const z of ifvgs) z.end = lastBi;
 
