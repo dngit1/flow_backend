@@ -785,6 +785,20 @@
       z-index: 9; /* above pivot zones/GMACD (7-8) - these are lines, not fill areas, meant to stay visible over them */
     }
 
+    .ict-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 9; /* the same layer as the other line overlays (channel, trendlines); the user's own drawings (10) stay above it */
+    }
+    .ict-svg text {
+      font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; /* ONE size for every label of this indicator */
+      user-select: none;
+    }
+
     .drawing-svg {
       position: absolute;
       top: 0;
@@ -1232,6 +1246,10 @@
             Channel (new)
           </label>
           <label class="sr-toggle-row">
+            <input type="checkbox" class="ict-toggle-checkbox" />
+            ICT - FVG, IVG, MSS
+          </label>
+          <label class="sr-toggle-row">
             <input type="checkbox" class="vwap-toggle-checkbox" />
             VWAP
           </label>
@@ -1316,6 +1334,7 @@
           <line class="trendline-upper" />
           <line class="trendline-lower" />
         </svg>
+        <svg class="ict-svg"></svg>
         <div class="net-flow-container"></div>
         <div class="flow-label-container"></div>
       </div>
@@ -1357,6 +1376,10 @@
           <label class="sr-toggle-row">
             <input type="checkbox" class="adaptive-toggle-checkbox" />
             Channel (new)
+          </label>
+          <label class="sr-toggle-row">
+            <input type="checkbox" class="ict-toggle-checkbox" />
+            ICT - FVG, IVG, MSS
           </label>
           <label class="sr-toggle-row">
             <input type="checkbox" class="vwap-toggle-checkbox" />
@@ -1443,6 +1466,7 @@
           <line class="trendline-upper" />
           <line class="trendline-lower" />
         </svg>
+        <svg class="ict-svg"></svg>
         <div class="net-flow-container"></div>
         <div class="flow-label-container"></div>
       </div>
@@ -1694,6 +1718,182 @@
     const ADAPTIVE_TREND_PERIODS = [20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
     const ADAPTIVE_TREND_DEV_MULT = 2.0; // Pine's "devMultiplier"
 
+    // ICT - FVG, IVG, MSS: three things drawn on the chart, every one decided on CLOSED candles only, so what is drawn never changes afterwards
+    // (nothing repaints). Ported step by step from the XNL ICT Pine indicator, which was tested against an independent model.
+    //   FVG  fair value gap: three candles leave a gap - candle 3's low above candle 1's high (bullish), or its high below candle 1's low (bearish).
+    //        Ignored if smaller than ICT_MIN_GAP_ATR or larger than ICT_MAX_GAP_ATR x ATR. Candles that merely touch leave no gap.
+    //   IVG  inversion gap: a candle CLOSES through the far side of a gap and it flips (a bullish gap closed below becomes resistance, a bearish gap
+    //        closed above becomes support). It fails when price then closes back through it on the other side.
+    //   MSS  market structure shift: a close beyond the latest swing high / low AGAINST the structure in place (the first break only sets the
+    //        direction, a break with the structure is a continuation and is not drawn). A broken swing is used up; a newer swing replaces an older one.
+    // A swing high is a candle whose high beats the ICT_SWING_LEN candles on its left and is at least equal to those on its right (swing low: mirror).
+    // ===== ICT ENGINE BEGIN (pure functions, no DOM - the tests run this exact block) =====
+    const ICT_ATR_LEN = 14;
+    const ICT_MIN_GAP_ATR = 0.3333; // a gap smaller than this many ATR is ignored
+    const ICT_MAX_GAP_ATR = 2.0;    // ...and one larger than this
+    const ICT_GAP_LIFE = 100;       // candles a gap is watched for before it stops growing
+    const ICT_MAX_ZONES = 30;       // most gaps watched at once (of each kind); the oldest are dropped
+    const ICT_KEEP_ENDED = 40;      // ended gaps kept on the chart (frozen)
+    const ICT_SWING_LEN = 5;        // candles on each side of a swing high / low
+    const ICT_KEEP_BREAKS = 15;     // MSS lines kept on the chart
+    const ICT_MIN_BARS = 20;        // fewer closed candles than this: nothing is drawn
+
+    // The finished candles: the newest one is still being built while its period has not ended, and is left out.
+    function ictClosedBars(bars, intervalSeconds, nowSec) {
+      if (!bars.length) return bars;
+      return bars[bars.length - 1].time + intervalSeconds > nowSec ? bars.slice(0, -1) : bars;
+    }
+
+    // Average true range, Wilder's smoothing, seeded with the plain average of the first `len` true ranges (what TradingView's ta.atr does).
+    function ictAtr(bars, len) {
+      const out = new Array(bars.length).fill(null);
+      let sum = 0;
+      let prev = null;
+      for (let i = 0; i < bars.length; i++) {
+        const b = bars[i];
+        const tr = i === 0 ? b.high - b.low : Math.max(b.high - b.low, Math.abs(b.high - bars[i - 1].close), Math.abs(b.low - bars[i - 1].close));
+        if (i < len) {
+          sum += tr;
+          if (i === len - 1) { prev = sum / len; out[i] = prev; }
+        } else {
+          prev = (prev * (len - 1) + tr) / len;
+          out[i] = prev;
+        }
+      }
+      return out;
+    }
+
+    // The swing confirmed on candle i is the candle `len` bars back (known only once `len` candles have followed it). Returns its price, or null.
+    function ictSwingHigh(bars, i, len) {
+      const pb = i - len;
+      if (pb < len) return null;
+      const h = bars[pb].high;
+      for (let k = 1; k <= len; k++) {
+        if (!(h > bars[pb - k].high)) return null;
+        if (!(h >= bars[pb + k].high)) return null;
+      }
+      return h;
+    }
+    function ictSwingLow(bars, i, len) {
+      const pb = i - len;
+      if (pb < len) return null;
+      const l = bars[pb].low;
+      for (let k = 1; k <= len; k++) {
+        if (!(l < bars[pb - k].low)) return null;
+        if (!(l <= bars[pb + k].low)) return null;
+      }
+      return l;
+    }
+
+    // Everything to draw for these CLOSED candles. Indices (x1, x2, mid) are positions in `bars`.
+    //   boxes:  { kind 'fvg'|'ivg', dir, top, bottom, x1, x2, text, style 'bull'|'bear'|'ivg'|'failed' }  (x2 = the newest candle while still watched)
+    //   breaks: { dir, price, x1 (the broken swing's candle), x2 (the candle that closed beyond it), mid, text }
+    function ictCompute(bars) {
+      const n = bars.length;
+      const atr = ictAtr(bars, ICT_ATR_LEN);
+      let fvgs = [];
+      let ifvgs = [];
+      const ended = [];
+      const breaks = [];
+      let trend = 0;
+      let swingHi = null;
+      let swingLo = null;
+      let lastBi = -1;
+      const endZone = (z, why, bi) => { z.end = bi; z.why = why; ended.push(z); };
+
+      for (let bi = 0; bi < n; bi++) {
+        const a = atr[bi];
+        if (!(a !== null && a > 0)) continue;
+        const hi = bars[bi].high;
+        const lo = bars[bi].low;
+        const cl = bars[bi].close;
+
+        // 1. inversion gaps that ran out of time, or that price has closed back through
+        const iKeep = [];
+        for (const z of ifvgs) {
+          if (bi - z.born > ICT_GAP_LIFE) endZone(z, 'expired', bi);
+          else if (z.dir > 0 ? cl < z.bottom : cl > z.top) endZone(z, 'failed', bi);
+          else iKeep.push(z);
+        }
+        ifvgs = iKeep;
+
+        // 2. fair value gaps that ran out of time, or that price has closed through (= inverted into an inversion gap)
+        const gKeep = [];
+        for (const g of fvgs) {
+          if (bi - g.born > ICT_GAP_LIFE) endZone(g, 'expired', bi);
+          else if (g.dir > 0 ? cl < g.bottom : cl > g.top) {
+            endZone(g, 'inverted', bi);
+            ifvgs.push({ top: g.top, bottom: g.bottom, dir: -g.dir, born: bi, first: bi, inv: true, end: bi, why: null });
+          } else gKeep.push(g);
+        }
+        fvgs = gKeep;
+
+        // 3. a new fair value gap completed by this candle
+        if (bi >= 2) {
+          const hi2 = bars[bi - 2].high;
+          const lo2 = bars[bi - 2].low;
+          const bull = lo > hi2;
+          const bear = hi < lo2;
+          if (bull || bear) {
+            const top = bull ? lo : lo2;
+            const bottom = bull ? hi2 : hi;
+            const size = top - bottom;
+            if (size >= ICT_MIN_GAP_ATR * a && size <= ICT_MAX_GAP_ATR * a) {
+              fvgs.push({ top, bottom, dir: bull ? 1 : -1, born: bi, first: bi - 2, inv: false, end: bi, why: null });
+              while (fvgs.length > ICT_MAX_ZONES) endZone(fvgs.shift(), 'trimmed', bi);
+            }
+          }
+        }
+
+        // 4. too many inversion gaps: the oldest are dropped
+        while (ifvgs.length > ICT_MAX_ZONES) endZone(ifvgs.shift(), 'trimmed', bi);
+        while (ended.length > ICT_KEEP_ENDED) ended.shift();
+
+        // 5. market structure: a close beyond the latest swing breaks it (and uses it up); then a newly confirmed swing becomes the latest
+        const breakSwing = (dir, sw) => {
+          const first = trend === 0;
+          const shift = !first && trend !== dir;
+          trend = dir;
+          if (shift) breaks.push({ dir, price: sw.price, x1: sw.bar, x2: bi, mid: Math.floor((sw.bar + bi) / 2), text: dir > 0 ? 'MSS ▲' : 'MSS ▼' });
+        };
+        if (swingHi !== null && cl > swingHi.price) { breakSwing(1, swingHi); swingHi = null; }
+        if (swingLo !== null && cl < swingLo.price) { breakSwing(-1, swingLo); swingLo = null; }
+        const pHigh = ictSwingHigh(bars, bi, ICT_SWING_LEN);
+        const pLow = ictSwingLow(bars, bi, ICT_SWING_LEN);
+        if (pHigh !== null) swingHi = { price: pHigh, bar: bi - ICT_SWING_LEN };
+        if (pLow !== null) swingLo = { price: pLow, bar: bi - ICT_SWING_LEN };
+        while (breaks.length > ICT_KEEP_BREAKS) breaks.shift();
+
+        lastBi = bi;
+      }
+
+      // gaps still being watched run to the newest closed candle
+      for (const z of fvgs) z.end = lastBi;
+      for (const z of ifvgs) z.end = lastBi;
+
+      const look = (z) => {
+        if (!z.inv) return { text: z.why === 'inverted' ? 'FVG (inverted)' : 'FVG', style: z.dir > 0 ? 'bull' : 'bear' };
+        if (z.why === 'failed') return { text: 'IVG (failed)', style: 'failed' };
+        return { text: z.dir > 0 ? 'IVG ▲' : 'IVG ▼', style: 'ivg' };
+      };
+      const boxes = [...ended, ...fvgs, ...ifvgs].map((z) => ({ kind: z.inv ? 'ivg' : 'fvg', dir: z.dir, top: z.top, bottom: z.bottom, x1: z.first, x2: z.end, ...look(z) }));
+      return { boxes, breaks, last: lastBi };
+    }
+    // ===== ICT ENGINE END =====
+
+    // Colours (taken from the Pine indicator) and how see-through each part is.
+    const ICT_COLORS = { bull: '#00c853', bear: '#ff5252', ivg: '#b388ff', failed: '#787b86' };
+    const ICT_LOOK = {
+      bull: { c: ICT_COLORS.bull, border: 0.4, fill: 0.12, text: 0.75 },
+      bear: { c: ICT_COLORS.bear, border: 0.4, fill: 0.12, text: 0.75 },
+      ivg: { c: ICT_COLORS.ivg, border: 0.6, fill: 0.18, text: 1 },
+      failed: { c: ICT_COLORS.failed, border: 0.3, fill: 0.1, text: 1 },
+    };
+    function ictRgba(hex, alpha) {
+      const v = parseInt(hex.slice(1), 16);
+      return `rgba(${(v >> 16) & 255}, ${(v >> 8) & 255}, ${v & 255}, ${alpha})`;
+    }
+
     const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
 
     // GEX walls/flip aggregate gamma x OI across the nearest N
@@ -1797,6 +1997,7 @@
           srEnabled: panel.srEnabled,
           levelsTrendlinesEnabled: panel.pivotZonesEnabled, // combined toggle - pivotZonesEnabled/gmacdEnabled/trendlinesEnabled always stay in sync now, so this one is representative of all three
           adaptiveTrendEnabled: panel.adaptiveTrendEnabled,
+          ictEnabled: panel.ictEnabled,
           vwapEnabled: panel.vwapEnabled,
           volumeProfileEnabled: panel.volumeProfileEnabled,
           gexEnabled: panel.gexEnabled,
@@ -2132,6 +2333,7 @@
       const initialSrEnabled = saved?.srEnabled !== false; // default on; only off if explicitly saved as off
       const initialLevelsTrendlinesEnabled = saved?.levelsTrendlinesEnabled === true; // default OFF - combines what were three separate toggles (Pivot Zones, GMACD, Sloped Trendlines) into one, matching the original Pine script's own combined title
       const initialAdaptiveTrendEnabled = saved?.adaptiveTrendEnabled === true; // default OFF - same reasoning
+      const initialIctEnabled = saved?.ictEnabled === true; // default OFF - same reasoning
       const initialVwapEnabled = saved?.vwapEnabled === true; // default OFF - same reasoning
       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
@@ -2177,6 +2379,8 @@
         srToggleCheckbox: root.querySelector('.sr-toggle-checkbox'),
         levelsTrendlinesToggleCheckbox: root.querySelector('.levels-trendlines-toggle-checkbox'),
         adaptiveToggleCheckbox: root.querySelector('.adaptive-toggle-checkbox'),
+        ictToggleCheckbox: root.querySelector('.ict-toggle-checkbox'),
+        ictSvg: root.querySelector('.ict-svg'),
         vwapToggleCheckbox: root.querySelector('.vwap-toggle-checkbox'),
         volumeProfileToggleCheckbox: root.querySelector('.volume-profile-toggle-checkbox'),
         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
@@ -2201,6 +2405,7 @@
       els.srToggleCheckbox.checked = initialSrEnabled;
       els.levelsTrendlinesToggleCheckbox.checked = initialLevelsTrendlinesEnabled;
       els.adaptiveToggleCheckbox.checked = initialAdaptiveTrendEnabled;
+      els.ictToggleCheckbox.checked = initialIctEnabled;
       els.vwapToggleCheckbox.checked = initialVwapEnabled;
       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
       els.gexToggleCheckbox.checked = initialGexEnabled;
@@ -2316,6 +2521,9 @@
         trendlinesEnabled: initialLevelsTrendlinesEnabled,
         adaptiveTrend: null, // {startTime, endTime, midStart, midEnd, upperStart, upperEnd, lowerStart, lowerEnd}
         adaptiveTrendEnabled: initialAdaptiveTrendEnabled,
+        ict: null, // {boxes, breaks} with times - everything positionICT needs to place the shapes
+        ictEls: null, // the SVG elements built for panel.ict
+        ictEnabled: initialIctEnabled,
         vwapEnabled: initialVwapEnabled,
         vwapSeries: null, // created lazily on first use via chart.addLineSeries
         drawings: [], // {id, type: 'hline'|'trendline'|'fib', points: [{time, price}, ...], el/els} - persisted per-symbol, not per-panel (see saveDrawings/loadDrawings)
@@ -3242,6 +3450,7 @@
             panel.computeAdaptiveTrend();
             panel.positionAdaptiveTrend();
           }
+          if (panel.ictEnabled) { panel.computeICT(); panel.positionICT(); } // a new candle opened, so the one before it just closed
           if (panel.vwapEnabled) panel.computeVwap();
           panel.positionDrawings();
         } else {
@@ -3282,6 +3491,7 @@
           if (panel.gmacdEnabled) panel.positionGmacdBands();
           if (panel.trendlinesEnabled) panel.positionTrendlines();
           if (panel.adaptiveTrendEnabled) panel.positionAdaptiveTrend();
+          if (panel.ictEnabled) panel.positionICT();
           panel.positionDrawings();
         }
 
@@ -3321,6 +3531,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionICT();
         panel.positionDrawings();
         panel.positionNetFlowLabels(true); // fromTick: a redraw that a tick causes is batched to one per frame
       };
@@ -3719,6 +3930,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionICT();
         panel.positionDrawings();
       };
 
@@ -3957,6 +4169,92 @@
 
         els.adaptiveFillLowerEl.style.display = 'block';
         els.adaptiveFillLowerEl.setAttribute('points', `${x1},${y1Mid} ${x1},${y1Lower} ${width},${y2Lower} ${width},${y2Mid}`);
+      };
+
+      // ICT - FVG, IVG, MSS (see ictCompute for the rules). Recomputed only when the candles change (a candle closes, history loads or is
+      // corrected), because it only ever looks at CLOSED candles; positionICT then runs on every tick / pan / zoom / resize, since where a shape
+      // sits on screen depends on the visible range and the price scale.
+      panel.computeICT = function () {
+        panel.ict = null;
+        if (panel.ictEnabled) {
+          const closed = ictClosedBars(candlestickSeries.data(), panel.intervalSeconds || 60, Math.floor(Date.now() / 1000));
+          if (closed.length >= ICT_MIN_BARS) {
+            const r = ictCompute(closed);
+            panel.ict = {
+              boxes: r.boxes.map((b) => ({ ...b, t1: closed[b.x1].time, t2: closed[b.x2].time })),
+              breaks: r.breaks.map((m) => ({ ...m, t1: closed[m.x1].time, t2: closed[m.x2].time, tm: closed[m.mid].time })),
+            };
+          }
+        }
+        panel.buildICTElements();
+      };
+
+      // Creates the SVG elements for the current panel.ict (all of them; positionICT only moves them).
+      panel.buildICTElements = function () {
+        const svg = els.ictSvg;
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        panel.ictEls = null;
+        if (!panel.ict) return;
+        const make = (name, attrs) => {
+          const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+          for (const k of Object.keys(attrs)) el.setAttribute(k, attrs[k]);
+          svg.appendChild(el);
+          return el;
+        };
+        const boxes = panel.ict.boxes.map((b) => {
+          const look = ICT_LOOK[b.style];
+          const rect = make('rect', { fill: ictRgba(look.c, look.fill), stroke: ictRgba(look.c, look.border), 'stroke-width': 1 });
+          const mid = make('line', { stroke: ictRgba(b.kind === 'ivg' ? ICT_COLORS.ivg : look.c, 0.7), 'stroke-width': 1, 'stroke-dasharray': '2 3' });
+          const text = make('text', { fill: ictRgba(look.c, look.text), 'text-anchor': 'start', 'dominant-baseline': 'hanging' });
+          text.textContent = b.text;
+          return { b, rect, mid, text };
+        });
+        const breaks = panel.ict.breaks.map((m) => {
+          const c = m.dir > 0 ? ICT_COLORS.bull : ICT_COLORS.bear;
+          const line = make('line', { stroke: c, 'stroke-width': 1, 'stroke-dasharray': '6 4' });
+          const text = make('text', { fill: c, 'text-anchor': 'middle', 'dominant-baseline': m.dir > 0 ? 'auto' : 'hanging' });
+          text.textContent = m.text;
+          return { m, line, text };
+        });
+        panel.ictEls = { boxes, breaks };
+      };
+
+      panel.positionICT = function () {
+        const svg = els.ictSvg;
+        const refs = panel.ictEls;
+        if (!panel.ictEnabled || !panel.ict || !refs) { svg.style.display = 'none'; return; }
+        svg.style.display = 'block';
+        const ts = chart.timeScale();
+        const width = els.chartContainer.clientWidth || 0;
+        const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+        for (const r of refs.boxes) {
+          const b = r.b;
+          const x1 = ts.timeToCoordinate(b.t1);
+          const x2 = ts.timeToCoordinate(b.t2);
+          const y1 = candlestickSeries.priceToCoordinate(b.top);
+          const y2 = candlestickSeries.priceToCoordinate(b.bottom);
+          const on = x1 != null && x2 != null && y1 != null && y2 != null && x2 >= -5 && x1 <= width + 5; // off-screen shapes are simply hidden
+          show(r.rect, on); show(r.mid, on); show(r.text, on);
+          if (!on) continue;
+          const top = Math.min(y1, y2);
+          const ym = (y1 + y2) / 2;
+          r.rect.setAttribute('x', x1); r.rect.setAttribute('y', top);
+          r.rect.setAttribute('width', Math.max(0, x2 - x1)); r.rect.setAttribute('height', Math.abs(y2 - y1));
+          r.mid.setAttribute('x1', x1); r.mid.setAttribute('x2', x2); r.mid.setAttribute('y1', ym); r.mid.setAttribute('y2', ym);
+          r.text.setAttribute('x', x1 + 4); r.text.setAttribute('y', top + 2);
+        }
+        for (const r of refs.breaks) {
+          const m = r.m;
+          const x1 = ts.timeToCoordinate(m.t1);
+          const x2 = ts.timeToCoordinate(m.t2);
+          const xm = ts.timeToCoordinate(m.tm);
+          const y = candlestickSeries.priceToCoordinate(m.price);
+          const on = x1 != null && x2 != null && xm != null && y != null && x2 >= -5 && x1 <= width + 5;
+          show(r.line, on); show(r.text, on);
+          if (!on) continue;
+          r.line.setAttribute('x1', x1); r.line.setAttribute('x2', x2); r.line.setAttribute('y1', y); r.line.setAttribute('y2', y);
+          r.text.setAttribute('x', xm); r.text.setAttribute('y', m.dir > 0 ? y - 4 : y + 4);
+        }
       };
 
       // Rebuilds the DOM from scratch (clears the container, recreates
@@ -4581,6 +4879,7 @@
           panel.positionGmacdBands();
           panel.positionTrendlines();
           panel.positionAdaptiveTrend();
+          panel.positionICT();
           panel.positionDrawings();
           panel.positionNetFlowLabels();
         } catch (err) {
@@ -4664,6 +4963,7 @@
         if (panel.gmacdEnabled) { panel.computeGMACD(); panel.positionGmacdBands(); }
         if (panel.trendlinesEnabled) { panel.computeTrendlines(); panel.positionTrendlines(); }
         if (panel.adaptiveTrendEnabled) { panel.computeAdaptiveTrend(); panel.positionAdaptiveTrend(); }
+        if (panel.ictEnabled) { panel.computeICT(); panel.positionICT(); }
         if (panel.vwapEnabled) panel.computeVwap();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
@@ -4829,6 +5129,7 @@
           panel.computeAdaptiveTrend();
           panel.positionAdaptiveTrend();
         }
+        if (panel.ictEnabled) { panel.computeICT(); panel.positionICT(); }
         panel.computeVwap();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
@@ -5157,6 +5458,13 @@
         saveChartSettings(panel);
       });
 
+      els.ictToggleCheckbox.addEventListener('change', () => {
+        panel.ictEnabled = els.ictToggleCheckbox.checked;
+        panel.computeICT();
+        panel.positionICT();
+        saveChartSettings(panel);
+      });
+
       els.vwapToggleCheckbox.addEventListener('change', () => {
         panel.vwapEnabled = els.vwapToggleCheckbox.checked;
         panel.computeVwap();
@@ -5249,6 +5557,7 @@
         panel.positionGmacdBands();
         panel.positionTrendlines();
         panel.positionAdaptiveTrend();
+        panel.positionICT();
         panel.positionDrawings();
         panel.positionNetFlowLabels();
         if (!els.indicatorPanel.classList.contains('hidden')) panel.clampIndicatorPanelPosition();
@@ -5265,7 +5574,7 @@
       // does - without this, the labels only caught up on the next tick
       // or 60s refresh, visibly lagging behind the actual line while
       // the user was actively scrolling/zooming.
-      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionDrawings(); panel.positionNetFlowLabels(); });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => { panel.positionWallLabels(); panel.positionStrikeOverlay(); panel.positionGexOverlay(); panel.positionCandleTimer(); panel.positionSRLabels(); panel.positionPivotZones(); panel.positionGmacdBands(); panel.positionTrendlines(); panel.positionAdaptiveTrend(); panel.positionICT(); panel.positionDrawings(); panel.positionNetFlowLabels(); });
 
       return panel;
     }
