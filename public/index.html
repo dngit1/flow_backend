@@ -4239,12 +4239,15 @@
         for (const r of refs.boxes) {
           const b = r.b;
           const x1 = ts.timeToCoordinate(b.t1);
-          const x2 = ts.timeToCoordinate(b.t2);
+          let x2 = ts.timeToCoordinate(b.t2);
           const y1 = candlestickSeries.priceToCoordinate(b.top);
           const y2 = candlestickSeries.priceToCoordinate(b.bottom);
           const on = x1 != null && x2 != null && y1 != null && y2 != null && x2 >= -5 && x1 <= width + 5; // off-screen shapes are simply hidden
           show(r.rect, on); show(r.mid, on); show(r.text, on);
           if (!on) continue;
+          // a gap that just formed spans no candles yet (an inversion gap starts on the candle that closed through): give it a visible minimum width
+          const minW = 4 * ((ts.options && ts.options().barSpacing) || 6);
+          if (x2 - x1 < minW) x2 = x1 + minW;
           const top = Math.min(y1, y2);
           const ym = (y1 + y2) / 2;
           r.rect.setAttribute('x', x1); r.rect.setAttribute('y', top);
