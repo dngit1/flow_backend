@@ -1732,8 +1732,10 @@
     const ICT_MIN_GAP_ATR = 0.3333; // a gap smaller than this many ATR is ignored
     const ICT_MAX_GAP_ATR = 2.0;    // ...and one larger than this
     const ICT_GAP_LIFE = 100;       // candles a gap is watched for before it stops growing
-    const ICT_MAX_ZONES = 30;       // most gaps watched at once (of each kind); the oldest are dropped
-    const ICT_KEEP_ENDED = 40;      // ended gaps kept on the chart (frozen)
+    const ICT_MAX_ZONES = 6;        // most gaps watched at once (of each kind); the oldest are dropped
+    const ICT_BODY_AVG = 5;         // a gap only counts if the middle candle is a strong 'displacement' candle: body bigger than the average of this many
+    const ICT_MIN_BODY_FRAC = 0.6;  // ...and mostly body (body at least this share of its high-low range)
+    const ICT_KEEP_ENDED = 0;       // ended gaps (inverted, failed, expired) kept on the chart; 0 = only live gaps are drawn
     const ICT_SWING_LEN = 5;        // candles on each side of a swing high / low
     const ICT_KEEP_BREAKS = 15;     // MSS lines kept on the chart
     const ICT_MIN_BARS = 20;        // fewer closed candles than this: nothing is drawn
@@ -1838,7 +1840,14 @@
             const top = bull ? lo : lo2;
             const bottom = bull ? hi2 : hi;
             const size = top - bottom;
-            if (size >= ICT_MIN_GAP_ATR * a && size <= ICT_MAX_GAP_ATR * a) {
+            const mid = bars[bi - 1];
+            const midBody = Math.abs(mid.close - mid.open);
+            let avgBody = 0;
+            let cnt = 0;
+            for (let k = Math.max(0, bi - 1 - ICT_BODY_AVG + 1); k <= bi - 1; k++) { avgBody += Math.abs(bars[k].close - bars[k].open); cnt++; }
+            avgBody /= cnt;
+            const displaced = midBody > avgBody && midBody >= ICT_MIN_BODY_FRAC * (mid.high - mid.low);
+            if (displaced && size >= ICT_MIN_GAP_ATR * a && size <= ICT_MAX_GAP_ATR * a) {
               fvgs.push({ top, bottom, dir: bull ? 1 : -1, born: bi, first: bi - 2, inv: false, end: bi, why: null });
               while (fvgs.length > ICT_MAX_ZONES) endZone(fvgs.shift(), 'trimmed', bi);
             }
