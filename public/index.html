@@ -84,7 +84,7 @@
     }
 
     #expsum-panel {
-      min-width: 680px;
+      min-width: 860px;
       max-height: 460px;
     }
     .expsum-controls { display: flex; gap: 6px; margin-bottom: 8px; }
@@ -97,7 +97,7 @@
     .expsum-click { cursor: pointer; }
     .expsum-click:hover { background-color: #1a2234; }
     .expsum-detail { margin: 2px 0 8px; background: #0f1420; border-radius: 6px; padding: 4px 0; }
-    .expsum-srow { display: grid; grid-template-columns: 64px repeat(6, 1fr); gap: 8px; padding: 2px 8px; font-size: 12px; text-align: right; }
+    .expsum-srow { display: grid; grid-template-columns: 56px repeat(8, 1fr); gap: 8px; padding: 2px 8px; font-size: 12px; text-align: right; }
     .expsum-srow > span:first-child { text-align: left; color: #fff; font-weight: 600; }
     .expsum-srow.atm { background-color: rgba(255, 213, 79, 0.12); }
     .expsum-srow .c { color: #00c853; }
@@ -5869,6 +5869,7 @@
       const input = document.getElementById('expsum-symbol');
       const body = document.getElementById('expsum-body');
       const money = (n) => (n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? '$' + (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? '$' + (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + 'k' : '$' + Math.round(n));
+      const ba = (b, a) => (b == null && a == null ? '-' : (b == null ? '-' : Number(b).toFixed(2)) + ' / ' + (a == null ? '-' : Number(a).toFixed(2)));
       const fmt = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : n.toLocaleString('en-US'));
       const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
       async function load() {
@@ -5905,7 +5906,7 @@
           const vol = Number(o.volume) || 0;
           const oi = Number(o.open_interest) || 0;
           const prem = vol * (Number(o.px) || 0) * 100;
-          if (o.option_type === 'call') { row.cv += vol; row.co += oi; row.cp += prem; } else if (o.option_type === 'put') { row.pv += vol; row.po += oi; row.pp += prem; }
+          if (o.option_type === 'call') { row.cv += vol; row.co += oi; row.cp += prem; row.cb = o.bid; row.ca = o.ask; } else if (o.option_type === 'put') { row.pv += vol; row.po += oi; row.pp += prem; row.pb = o.bid; row.pa = o.ask; }
           byStrike.set(o.strike, row);
         }
         let rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
@@ -5927,10 +5928,10 @@
         const maxCP = Math.max(...rows.map((r) => r.cp)), maxPP = Math.max(...rows.map((r) => r.pp));
         let shown = rows;
         if (!showAll && atmIdx >= 0 && total > STRIKES_EACH_SIDE * 2 + 1) shown = rows.slice(Math.max(0, atmIdx - STRIKES_EACH_SIDE), atmIdx + STRIKES_EACH_SIDE + 1);
-        const head = '<div class="expsum-srow expsum-head"><span>Strike</span><span>Call vol</span><span>Call OI</span><span>Call $</span><span>Put vol</span><span>Put OI</span><span>Put $</span></div>';
+        const head = '<div class="expsum-srow expsum-head"><span>Strike</span><span>Call vol</span><span>Call OI</span><span>Call $</span><span>Call bid / ask</span><span>Put vol</span><span>Put OI</span><span>Put $</span><span>Put bid / ask</span></div>';
         const body2 = shown.map((r) => `<div class="expsum-srow${rows[atmIdx] === r ? ' atm' : ''}"><span>${r.strike}</span>` +
-          `<span class="c${r.cv > 0 && r.cv === maxCV ? ' mx' : ''}">${fmt(r.cv)}</span><span class="c${r.co > 0 && r.co === maxCO ? ' mx' : ''}">${fmt(r.co)}</span><span class="c${r.cp > 0 && r.cp === maxCP ? ' mx' : ''}">${money(r.cp)}</span>` +
-          `<span class="p${r.pv > 0 && r.pv === maxPV ? ' mx' : ''}">${fmt(r.pv)}</span><span class="p${r.po > 0 && r.po === maxPO ? ' mx' : ''}">${fmt(r.po)}</span><span class="p${r.pp > 0 && r.pp === maxPP ? ' mx' : ''}">${money(r.pp)}</span></div>`).join('');
+          `<span class="c${r.cv > 0 && r.cv === maxCV ? ' mx' : ''}">${fmt(r.cv)}</span><span class="c${r.co > 0 && r.co === maxCO ? ' mx' : ''}">${fmt(r.co)}</span><span class="c${r.cp > 0 && r.cp === maxCP ? ' mx' : ''}">${money(r.cp)}</span><span class="c">${ba(r.cb, r.ca)}</span>` +
+          `<span class="p${r.pv > 0 && r.pv === maxPV ? ' mx' : ''}">${fmt(r.pv)}</span><span class="p${r.po > 0 && r.po === maxPO ? ' mx' : ''}">${fmt(r.po)}</span><span class="p${r.pp > 0 && r.pp === maxPP ? ' mx' : ''}">${money(r.pp)}</span><span class="p">${ba(r.pb, r.pa)}</span></div>`).join('');
         const more = shown.length < total ? `<div class="expsum-more" data-all="1">Showing ${shown.length} of ${total} strikes around the price - click to show all</div>` : '';
         const hiddenNote = hidden > 0 ? `<div class="expsum-more" style="cursor:default;">${hidden} small strike${hidden === 1 ? '' : 's'} hidden (all numbers under ${minVal})</div>` : '';
         return head + body2 + more + hiddenNote;
