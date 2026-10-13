@@ -1229,6 +1229,7 @@
         <div class="expsum-controls">
           <input id="expsum-symbol" type="text" placeholder="Ticker" autocomplete="off" />
           <button id="expsum-load" class="leaderboard-btn">Load</button>
+          <label style="font-size:11px; color:#8fa0be; display:flex; align-items:center; gap:4px; margin-left:8px;" title="A strike is hidden when its call volume, call OI, put volume and put OI are ALL below this number. 0 = show every strike.">Hide strikes under <input id="expsum-min" type="number" min="0" step="10" value="100" style="width:64px; text-transform:none;" /></label>
         </div>
         <div id="expsum-body">Type a ticker and click Load.</div>
       </div>
@@ -5907,6 +5908,12 @@
         }
         let rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
         if (!rows.length) return '<div class="expsum-more" style="cursor:default;">No contracts returned for this expiration.</div>';
+        // small strikes are dropped: one stays if ANY of its four numbers reaches the minimum (so a strike with big OI but little volume is kept)
+        const minVal = Math.max(0, Number(document.getElementById('expsum-min').value) || 0);
+        const allCount = rows.length;
+        rows = rows.filter((r) => Math.max(r.cv, r.co, r.pv, r.po) >= minVal);
+        const hidden = allCount - rows.length;
+        if (!rows.length) return `<div class="expsum-more" style="cursor:default;">All ${allCount} strikes are under ${minVal} - lower the "Hide strikes under" number to see them.</div>`;
         let atmIdx = -1;
         if (price > 0) {
           let best = Infinity;
@@ -5922,7 +5929,8 @@
           `<span class="c${r.cv > 0 && r.cv === maxCV ? ' mx' : ''}">${fmt(r.cv)}</span><span class="c${r.co > 0 && r.co === maxCO ? ' mx' : ''}">${fmt(r.co)}</span>` +
           `<span class="p${r.pv > 0 && r.pv === maxPV ? ' mx' : ''}">${fmt(r.pv)}</span><span class="p${r.po > 0 && r.po === maxPO ? ' mx' : ''}">${fmt(r.po)}</span></div>`).join('');
         const more = shown.length < total ? `<div class="expsum-more" data-all="1">Showing ${shown.length} of ${total} strikes around the price - click to show all</div>` : '';
-        return head + body2 + more;
+        const hiddenNote = hidden > 0 ? `<div class="expsum-more" style="cursor:default;">${hidden} small strike${hidden === 1 ? '' : 's'} hidden (all numbers under ${minVal})</div>` : '';
+        return head + body2 + more + hiddenNote;
       }
       body.addEventListener('click', async (e) => {
         const more = e.target.closest('.expsum-more[data-all]');
@@ -5962,6 +5970,7 @@
           input.focus();
         }
       });
+      document.getElementById('expsum-min').addEventListener('change', () => { body.querySelectorAll('.expsum-detail').forEach((d) => d.remove()); body.querySelectorAll('.expsum-click').forEach((r) => { r.firstElementChild.innerHTML = r.firstElementChild.innerHTML.replace('\u25BE', '\u25B8'); }); }); // the open tables used the old number - click a row again
       document.getElementById('expsum-load').addEventListener('click', load);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
     })();
