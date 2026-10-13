@@ -84,12 +84,12 @@
     }
 
     #expsum-panel {
-      min-width: 520px;
+      min-width: 680px;
       max-height: 460px;
     }
     .expsum-controls { display: flex; gap: 6px; margin-bottom: 8px; }
     .expsum-controls input { width: 90px; text-transform: uppercase; background: #1f293d; color: #fff; border: 1px solid #364153; border-radius: 6px; padding: 5px 8px; font-size: 12px; }
-    .expsum-row { display: grid; grid-template-columns: 62px repeat(4, 1fr) 54px; gap: 8px; padding: 3px 6px; font-size: 12px; text-align: right; }
+    .expsum-row { display: grid; grid-template-columns: 62px repeat(6, 1fr) 50px; gap: 8px; padding: 3px 6px; font-size: 12px; text-align: right; }
     .expsum-row > span:first-child { text-align: left; color: #c5d0e6; }
     .expsum-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #8fa0be; border-bottom: 1px solid #1f293d; margin-bottom: 4px; }
     .expsum-row .c { color: #00c853; }
@@ -97,7 +97,7 @@
     .expsum-click { cursor: pointer; }
     .expsum-click:hover { background-color: #1a2234; }
     .expsum-detail { margin: 2px 0 8px; background: #0f1420; border-radius: 6px; padding: 4px 0; }
-    .expsum-srow { display: grid; grid-template-columns: 64px repeat(4, 1fr); gap: 8px; padding: 2px 8px; font-size: 12px; text-align: right; }
+    .expsum-srow { display: grid; grid-template-columns: 64px repeat(6, 1fr); gap: 8px; padding: 2px 8px; font-size: 12px; text-align: right; }
     .expsum-srow > span:first-child { text-align: left; color: #fff; font-weight: 600; }
     .expsum-srow.atm { background-color: rgba(255, 213, 79, 0.12); }
     .expsum-srow .c { color: #00c853; }
@@ -5868,6 +5868,7 @@
       const panel = document.getElementById('expsum-panel');
       const input = document.getElementById('expsum-symbol');
       const body = document.getElementById('expsum-body');
+      const money = (n) => (n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? '$' + (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? '$' + (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + 'k' : '$' + Math.round(n));
       const fmt = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : n.toLocaleString('en-US'));
       const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
       async function load() {
@@ -5879,16 +5880,16 @@
           const res = await fetch(`${BACKEND_HTTP}/api/expiration-summary?symbol=${encodeURIComponent(symbol)}`, { credentials: 'include' });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
-          const head = '<div class="expsum-row expsum-head"><span>Exp</span><span>Call vol</span><span>Put vol</span><span>Call OI</span><span>Put OI</span><span>P/C OI</span></div>';
-          let tCV = 0, tPV = 0, tCO = 0, tPO = 0;
+          const head = '<div class="expsum-row expsum-head"><span>Exp</span><span>Call vol</span><span>Put vol</span><span>Call OI</span><span>Put OI</span><span>Call $</span><span>Put $</span><span>P/C OI</span></div>';
+          let tCV = 0, tPV = 0, tCO = 0, tPO = 0, tCP = 0, tPP = 0;
           const rowsHtml = (data.rows || []).map((r) => {
-            if (r.error) return `<div class="expsum-row"><span>${esc(formatExpirationLabel(r.expiration))}</span><span style="grid-column: 2 / 7; text-align:left; color:#8fa0be;">could not load</span></div>`;
-            tCV += r.callVolume; tPV += r.putVolume; tCO += r.callOI; tPO += r.putOI;
+            if (r.error) return `<div class="expsum-row"><span>${esc(formatExpirationLabel(r.expiration))}</span><span style="grid-column: 2 / 9; text-align:left; color:#8fa0be;">could not load</span></div>`;
+            tCV += r.callVolume; tPV += r.putVolume; tCO += r.callOI; tPO += r.putOI; tCP += r.callPrem || 0; tPP += r.putPrem || 0;
             const pc = r.callOI > 0 ? (r.putOI / r.callOI).toFixed(2) : '-';
-            return `<div class="expsum-row expsum-click" data-exp="${esc(r.expiration)}" title="Click for each strike"><span>&#9656; ${esc(formatExpirationLabel(r.expiration))}</span><span class="c">${fmt(r.callVolume)}</span><span class="p">${fmt(r.putVolume)}</span><span class="c">${fmt(r.callOI)}</span><span class="p">${fmt(r.putOI)}</span><span>${pc}</span></div>`;
+            return `<div class="expsum-row expsum-click" data-exp="${esc(r.expiration)}" title="Click for each strike"><span>&#9656; ${esc(formatExpirationLabel(r.expiration))}</span><span class="c">${fmt(r.callVolume)}</span><span class="p">${fmt(r.putVolume)}</span><span class="c">${fmt(r.callOI)}</span><span class="p">${fmt(r.putOI)}</span><span class="c">${money(r.callPrem || 0)}</span><span class="p">${money(r.putPrem || 0)}</span><span>${pc}</span></div>`;
           }).join('');
-          const total = `<div class="expsum-row" style="border-top:1px solid #1f293d; margin-top:4px; font-weight:700;"><span>Total</span><span class="c">${fmt(tCV)}</span><span class="p">${fmt(tPV)}</span><span class="c">${fmt(tCO)}</span><span class="p">${fmt(tPO)}</span><span>${tCO > 0 ? (tPO / tCO).toFixed(2) : '-'}</span></div>`;
-          body.innerHTML = head + rowsHtml + total + `<div class="expsum-note">${esc(symbol)} - volume is today's so far; open interest is as of the previous close. Click an expiration to see every strike. Loaded on request (cached 5 min).</div>`;
+          const total = `<div class="expsum-row" style="border-top:1px solid #1f293d; margin-top:4px; font-weight:700;"><span>Total</span><span class="c">${fmt(tCV)}</span><span class="p">${fmt(tPV)}</span><span class="c">${fmt(tCO)}</span><span class="p">${fmt(tPO)}</span><span class="c">${money(tCP)}</span><span class="p">${money(tPP)}</span><span>${tCO > 0 ? (tPO / tCO).toFixed(2) : '-'}</span></div>`;
+          body.innerHTML = head + rowsHtml + total + `<div class="expsum-note">${esc(symbol)} - volume is today's so far; open interest is as of the previous close; $ = volume x option price x 100 (an estimate at the last / mid price, not the actual traded premium). Click an expiration to see every strike. Loaded on request (cached 5 min).</div>`;
         } catch (err) {
           console.error('[expsum] failed:', err);
           body.textContent = err.message || 'Could not load - try again.';
@@ -5900,10 +5901,11 @@
       function strikeTableHtml(options, price, showAll) {
         const byStrike = new Map();
         for (const o of options) {
-          const row = byStrike.get(o.strike) || { strike: o.strike, cv: 0, co: 0, pv: 0, po: 0 };
+          const row = byStrike.get(o.strike) || { strike: o.strike, cv: 0, co: 0, pv: 0, po: 0, cp: 0, pp: 0 };
           const vol = Number(o.volume) || 0;
           const oi = Number(o.open_interest) || 0;
-          if (o.option_type === 'call') { row.cv += vol; row.co += oi; } else if (o.option_type === 'put') { row.pv += vol; row.po += oi; }
+          const prem = vol * (Number(o.px) || 0) * 100;
+          if (o.option_type === 'call') { row.cv += vol; row.co += oi; row.cp += prem; } else if (o.option_type === 'put') { row.pv += vol; row.po += oi; row.pp += prem; }
           byStrike.set(o.strike, row);
         }
         let rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
@@ -5922,12 +5924,13 @@
         const total = rows.length;
         const maxCV = Math.max(...rows.map((r) => r.cv)), maxCO = Math.max(...rows.map((r) => r.co));
         const maxPV = Math.max(...rows.map((r) => r.pv)), maxPO = Math.max(...rows.map((r) => r.po));
+        const maxCP = Math.max(...rows.map((r) => r.cp)), maxPP = Math.max(...rows.map((r) => r.pp));
         let shown = rows;
         if (!showAll && atmIdx >= 0 && total > STRIKES_EACH_SIDE * 2 + 1) shown = rows.slice(Math.max(0, atmIdx - STRIKES_EACH_SIDE), atmIdx + STRIKES_EACH_SIDE + 1);
-        const head = '<div class="expsum-srow expsum-head"><span>Strike</span><span>Call vol</span><span>Call OI</span><span>Put vol</span><span>Put OI</span></div>';
+        const head = '<div class="expsum-srow expsum-head"><span>Strike</span><span>Call vol</span><span>Call OI</span><span>Call $</span><span>Put vol</span><span>Put OI</span><span>Put $</span></div>';
         const body2 = shown.map((r) => `<div class="expsum-srow${rows[atmIdx] === r ? ' atm' : ''}"><span>${r.strike}</span>` +
-          `<span class="c${r.cv > 0 && r.cv === maxCV ? ' mx' : ''}">${fmt(r.cv)}</span><span class="c${r.co > 0 && r.co === maxCO ? ' mx' : ''}">${fmt(r.co)}</span>` +
-          `<span class="p${r.pv > 0 && r.pv === maxPV ? ' mx' : ''}">${fmt(r.pv)}</span><span class="p${r.po > 0 && r.po === maxPO ? ' mx' : ''}">${fmt(r.po)}</span></div>`).join('');
+          `<span class="c${r.cv > 0 && r.cv === maxCV ? ' mx' : ''}">${fmt(r.cv)}</span><span class="c${r.co > 0 && r.co === maxCO ? ' mx' : ''}">${fmt(r.co)}</span><span class="c${r.cp > 0 && r.cp === maxCP ? ' mx' : ''}">${money(r.cp)}</span>` +
+          `<span class="p${r.pv > 0 && r.pv === maxPV ? ' mx' : ''}">${fmt(r.pv)}</span><span class="p${r.po > 0 && r.po === maxPO ? ' mx' : ''}">${fmt(r.po)}</span><span class="p${r.pp > 0 && r.pp === maxPP ? ' mx' : ''}">${money(r.pp)}</span></div>`).join('');
         const more = shown.length < total ? `<div class="expsum-more" data-all="1">Showing ${shown.length} of ${total} strikes around the price - click to show all</div>` : '';
         const hiddenNote = hidden > 0 ? `<div class="expsum-more" style="cursor:default;">${hidden} small strike${hidden === 1 ? '' : 's'} hidden (all numbers under ${minVal})</div>` : '';
         return head + body2 + more + hiddenNote;
