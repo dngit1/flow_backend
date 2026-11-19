@@ -1,0 +1,323 @@
+--- bk_flow_index_pre_nq.html	2026-11-18 21:23:23.210118294 -0600
++++ /mnt/user-data/outputs/public/index.html	2026-11-18 21:28:55.090828538 -0600
+@@ -1305,6 +1305,10 @@
+             <input type="checkbox" class="gex-toggle-checkbox" checked />
+             Gamma Exposure (GEX)
+           </label>
++          <label class="sr-toggle-row">
++            <input type="checkbox" class="flow-levels-toggle-checkbox" checked />
++            Flow Levels (Call/Put Wall, Magnet, High/Low Area)
++          </label>
+           <div class="indicator-add-row">
+             <select class="indicator-type-select">
+               <option value="MA">MA</option>
+@@ -1437,6 +1441,10 @@
+             <input type="checkbox" class="gex-toggle-checkbox" checked />
+             Gamma Exposure (GEX)
+           </label>
++          <label class="sr-toggle-row">
++            <input type="checkbox" class="flow-levels-toggle-checkbox" checked />
++            Flow Levels (Call/Put Wall, Magnet, High/Low Area)
++          </label>
+           <div class="indicator-add-row">
+             <select class="indicator-type-select">
+               <option value="MA">MA</option>
+@@ -2052,6 +2060,7 @@
+           vwapEnabled: panel.vwapEnabled,
+           volumeProfileEnabled: panel.volumeProfileEnabled,
+           gexEnabled: panel.gexEnabled,
++          flowLevelsEnabled: panel.flowLevelsEnabled,
+           macdEnabled: panel.macdEnabled,
+           flowMarkersVisible: panel.flowMarkersVisible,
+           indicators: panel.indicators.map((ind) => ({
+@@ -2121,6 +2130,15 @@
+       return /^[A-Z]{1,3}[FGHJKMNQUVXZ]\d$/.test(symbol);
+     }
+ 
++    // Futures have no option chain of their own here, so on an NQ / MNQ chart the Call Wall / Put Wall / Magnet / High Area / Low Area come from
++    // QQQ's option chain, and on an ES / MES chart from SPX's, converted to futures points (see refreshCallPutWalls).
++    // Returns the underlying to use, or null. (To use SPY instead of SPX for ES, change 'SPX' below to 'SPY'.)
++    function optionsUnderlyingFor(symbol) {
++      if (/^M?NQ[FGHJKMNQUVXZ]\d$/.test(symbol)) return 'QQQ';
++      if (/^M?ES[FGHJKMNQUVXZ]\d$/.test(symbol)) return 'SPX';
++      return null;
++    }
++
+     function computeMA(bars, period) {
+       const points = [];
+       for (let i = period - 1; i < bars.length; i++) {
+@@ -2387,6 +2405,7 @@
+       const initialIctEnabled = saved?.ictEnabled === true; // default OFF - same reasoning
+       const initialVwapEnabled = saved?.vwapEnabled === true; // default OFF - same reasoning
+       const initialVolumeProfileEnabled = saved?.volumeProfileEnabled === true; // default OFF now (was on) - GEX is the new default overlay, this stays available to toggle back on for comparison
++      const initialFlowLevelsEnabled = saved?.flowLevelsEnabled !== false; // default on; only off if explicitly saved as off
+       const initialGexEnabled = saved?.gexEnabled !== false; // default on; only off if explicitly saved as off
+       const initialMacdEnabled = saved?.macdEnabled !== false; // default on; only off if explicitly saved as off
+       const initialFlowMarkersVisible = saved?.flowMarkersVisible !== false; // default on; only off if explicitly saved as off
+@@ -2437,6 +2456,7 @@
+         macdToggleCheckbox: root.querySelector('.macd-toggle-checkbox'),
+         flowMarkersToggleCheckbox: root.querySelector('.flow-markers-toggle-checkbox'),
+         gexToggleCheckbox: root.querySelector('.gex-toggle-checkbox'),
++        flowLevelsToggleCheckbox: root.querySelector('.flow-levels-toggle-checkbox'),
+         gexOverlayContainer: root.querySelector('.gex-overlay-container'),
+         gexCallWallLabel: root.querySelector('.gex-call-wall-label'),
+         gexPutWallLabel: root.querySelector('.gex-put-wall-label'),
+@@ -2460,6 +2480,7 @@
+       els.vwapToggleCheckbox.checked = initialVwapEnabled;
+       els.volumeProfileToggleCheckbox.checked = initialVolumeProfileEnabled;
+       els.gexToggleCheckbox.checked = initialGexEnabled;
++      els.flowLevelsToggleCheckbox.checked = initialFlowLevelsEnabled;
+       els.macdToggleCheckbox.checked = initialMacdEnabled;
+       els.flowMarkersToggleCheckbox.checked = initialFlowMarkersVisible;
+ 
+@@ -2583,6 +2604,7 @@
+         selectedDrawingId: null,
+         volumeProfileEnabled: initialVolumeProfileEnabled,
+         gexEnabled: initialGexEnabled,
++        flowLevelsEnabled: initialFlowLevelsEnabled,
+         macdEnabled: initialMacdEnabled,
+         chart,
+         candlestickSeries,
+@@ -4696,15 +4718,16 @@
+       // positioning. Failures are caught internally and return empty
+       // maps rather than throwing, so a GEX-specific hiccup doesn't take
+       // down the (unrelated) volume-based walls this runs alongside.
+-      panel.fetchGexData = async function () {
++      panel.fetchGexData = async function (chainSymbol) {
++        const gexSym = chainSymbol || panel.symbol;
+         const callGexByStrike = new Map();
+         const putGexByStrike = new Map();
+         let nearestExpirationOptions = []; // for Magnet below - needs the SINGLE nearest expiration in isolation, not blended across all 6 like the walls
+         try {
+-          const allExpirations = await fetchAllExpirations(panel.symbol);
++          const allExpirations = await fetchAllExpirations(gexSym);
+           const targetExpirations = allExpirations.slice(0, GEX_EXPIRATION_COUNT);
+           const results = await Promise.all(targetExpirations.map((exp) =>
+-            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(exp)}`, { credentials: 'include' })
++            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(gexSym)}&expiration=${encodeURIComponent(exp)}`, { credentials: 'include' })
+               .then((r) => r.json())
+               .catch((err) => { console.error(`[gex:${panel.symbol}] chain fetch failed for ${exp}:`, err); return { options: [] }; })
+           ));
+@@ -4726,12 +4749,34 @@
+       };
+ 
+       panel.refreshCallPutWalls = async function (expiration) {
+-        if (!expiration || isFuturesTicker(panel.symbol)) return;
++        const etf = optionsUnderlyingFor(panel.symbol);   // 'QQQ' on an NQ / MNQ chart, 'SPX' on an ES / MES chart, otherwise null
++        if (isFuturesTicker(panel.symbol) && !etf) return;
++        if (!etf && !expiration) return;
+ 
+         try {
++          // NQ / MNQ / ES / MES chart: compute everything from the underlying's chain (QQQ / SPX), then multiply the finished levels by futures price / underlying price (taken now, so the
++          // futures premium and the quarterly roll are included automatically).
++          let chainSym = panel.symbol;
++          let chainExpiration = expiration;
++          let ratio = 1;
++          let atmPrice = panel.lastBarPrice;
++          if (etf) {
++            const nqPrice = panel.lastBarPrice;
++            if (!(nqPrice > 0)) return;   // no NQ price on the chart yet - the next 60 s refresh tries again
++            const [allExp, spotRes] = await Promise.all([
++              fetchAllExpirations(etf),
++              fetch(`${BACKEND_HTTP}/api/spot?symbol=${encodeURIComponent(etf)}`, { credentials: 'include' }),
++            ]);
++            const spotData = await spotRes.json();
++            if (!spotRes.ok || !(spotData.last > 0)) throw new Error(spotData.error || `no ${etf} price`);
++            chainSym = etf;
++            chainExpiration = allExp[0];   // nearest expiration, same idea as the Magnet
++            atmPrice = spotData.last;
++            ratio = nqPrice / spotData.last;
++          }
+           const [volumeRes, gexData] = await Promise.all([
+-            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(panel.symbol)}&expiration=${encodeURIComponent(expiration)}`, { credentials: 'include' }),
+-            panel.fetchGexData(),
++            fetch(`${BACKEND_HTTP}/api/chain?symbol=${encodeURIComponent(chainSym)}&expiration=${encodeURIComponent(chainExpiration)}`, { credentials: 'include' }),
++            panel.fetchGexData(chainSym),
+           ]);
+           const data = await volumeRes.json();
+           if (!volumeRes.ok) throw new Error(data.error || `Request failed: ${volumeRes.status}`);
+@@ -4794,7 +4839,7 @@
+           let atmIdx = 0;
+           let bestDist = Infinity;
+           sortedStrikes.forEach((s, i) => {
+-            const d = Math.abs(s - panel.lastBarPrice);
++            const d = Math.abs(s - atmPrice);
+             if (d < bestDist) { bestDist = d; atmIdx = i; }
+           });
+ 
+@@ -4832,76 +4877,90 @@
+           if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
+           if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
+ 
++          // On a futures chart the finished levels (QQQ or SPX) are converted to futures points (rounded to the 0.25 tick); the label also shows the QQQ strike.
++          // Gamma Flip is not shown there (only Call Wall, Put Wall, Magnet, High Area, Low Area). Elsewhere the values are used unchanged.
++          const toNq = (v) => (v == null ? null : Math.round(v * ratio * 4) / 4);
++          const conv = (v) => (etf ? toNq(v) : v);
++          const qqqTag = (v) => (etf && v != null ? ` (${etf} ${v})` : '');
++          // "Flow Levels" in the Indicators menu switches the five lines (Call Wall, Put Wall, Magnet, High Area, Low Area) on / off.
++          const lv = panel.flowLevelsEnabled !== false;
++          const dCallWall = lv ? conv(gexCallWall) : null;
++          const dPutWall = lv ? conv(gexPutWall) : null;
++          const dFlip = etf ? null : gexFlip;
++          const dMagnet = lv ? conv(gexMagnet) : null;
++          const dHigh = lv ? conv(highArea) : null;
++          const dLow = lv ? conv(lowArea) : null;
++
+           // callWall/putWall themselves are still computed above and used
+           // below (isWallRow highlighting + the strike range for the
+           // volume profile overlay) - only THEIR chart lines/labels stay
+           // removed; High/Low Area are back to being drawn again below.
+-          panel.gexCallWallPrice = gexCallWall;
+-          panel.gexPutWallPrice = gexPutWall;
+-          panel.gexFlipPrice = gexFlip;
+-          panel.gexMagnetPrice = gexMagnet;
+-          panel.highAreaPrice = highArea;
+-          panel.lowAreaPrice = lowArea;
++          panel.gexCallWallPrice = dCallWall;
++          panel.gexPutWallPrice = dPutWall;
++          panel.gexFlipPrice = dFlip;
++          panel.gexMagnetPrice = dMagnet;
++          panel.highAreaPrice = dHigh;
++          panel.lowAreaPrice = dLow;
+ 
+-          if (gexCallWall != null) {
++          if (dCallWall != null) {
+             panel.gexCallWallLine = candlestickSeries.createPriceLine({
+-              price: gexCallWall,
++              price: dCallWall,
+               color: '#ffa726',
+               lineWidth: 2,
+               lineStyle: LightweightCharts.LineStyle.Dashed,
+               axisLabelVisible: true,
+             });
+-            els.gexCallWallLabel.innerText = `GEX Call Wall ${gexCallWall}`;
++            els.gexCallWallLabel.innerText = `GEX Call Wall ${dCallWall}${qqqTag(gexCallWall)}`;
+           }
+-          if (gexPutWall != null) {
++          if (dPutWall != null) {
+             panel.gexPutWallLine = candlestickSeries.createPriceLine({
+-              price: gexPutWall,
++              price: dPutWall,
+               color: '#29b6f6',
+               lineWidth: 2,
+               lineStyle: LightweightCharts.LineStyle.Dashed,
+               axisLabelVisible: true,
+             });
+-            els.gexPutWallLabel.innerText = `GEX Put Wall ${gexPutWall}`;
++            els.gexPutWallLabel.innerText = `GEX Put Wall ${dPutWall}${qqqTag(gexPutWall)}`;
+           }
+-          if (gexFlip != null) {
++          if (dFlip != null) {
+             panel.gexFlipLine = candlestickSeries.createPriceLine({
+-              price: gexFlip,
++              price: dFlip,
+               color: '#e0e0e0',
+               lineWidth: 1,
+               lineStyle: LightweightCharts.LineStyle.Solid,
+               axisLabelVisible: true,
+             });
+-            els.gexFlipLabel.innerText = `Gamma Flip ${gexFlip}`;
++            els.gexFlipLabel.innerText = `Gamma Flip ${dFlip}`;
+           }
+-          if (gexMagnet != null) {
++          if (dMagnet != null) {
+             panel.gexMagnetLine = candlestickSeries.createPriceLine({
+-              price: gexMagnet,
++              price: dMagnet,
+               color: '#fdd835',
+               lineWidth: 1,
+               lineStyle: LightweightCharts.LineStyle.Dotted,
+               axisLabelVisible: true,
+             });
+-            els.gexMagnetLabel.innerText = `Magnet: ${gexMagnet}`;
++            els.gexMagnetLabel.innerText = `Magnet: ${dMagnet}${qqqTag(gexMagnet)}`;
+           }
+-          if (highArea != null) {
++          if (dHigh != null) {
+             panel.highAreaLine = candlestickSeries.createPriceLine({
+-              price: highArea,
++              price: dHigh,
+               color: '#42a5f5',
+               lineWidth: 2,
+               lineStyle: LightweightCharts.LineStyle.Dashed,
+               axisLabelVisible: true,
+             });
+-            els.highAreaLabel.innerText = `High Area: ${highArea}`;
++            els.highAreaLabel.innerText = `High Area: ${dHigh}${qqqTag(highArea)}`;
+           }
+-          if (lowArea != null) {
++          if (dLow != null) {
+             panel.lowAreaLine = candlestickSeries.createPriceLine({
+-              price: lowArea,
++              price: dLow,
+               color: '#42a5f5',
+               lineWidth: 2,
+               lineStyle: LightweightCharts.LineStyle.Dashed,
+               axisLabelVisible: true,
+             });
+-            els.lowAreaLabel.innerText = `Low Area: ${lowArea}`;
++            els.lowAreaLabel.innerText = `Low Area: ${dLow}${qqqTag(lowArea)}`;
+           }
+           panel.positionWallLabels();
+           panel.applyGexWallRegimeStyle();
+@@ -4925,6 +4984,7 @@
+             p: putGexByStrike.get(strike) || 0,
+             isWallRow: strike === gexCallWall || strike === gexPutWall,
+           }));
++          if (etf) { panel.strikeOverlayData = []; panel.gexStrikeData = []; }   // the underlying's strikes don't map to futures prices: lines only
+           panel.positionStrikeOverlay();
+           panel.positionGexOverlay();
+           panel.positionCandleTimer();
+@@ -5222,6 +5282,15 @@
+           els.expirationSelect.disabled = true;
+           els.expirationSelect.innerHTML = '<option value="">N/A (futures)</option>';
+ 
++          // NQ / MNQ / ES / MES: draw the QQQ (or SPX) option levels converted to futures points, refreshed every minute (first try again after 5 s in case the
++          // chart's price isn't there yet).
++          if (optionsUnderlyingFor(symbol)) {
++            clearInterval(panel.wallRefreshTimer);
++            panel.refreshCallPutWalls('');
++            setTimeout(() => { if (panel.symbol === symbol) panel.refreshCallPutWalls(''); }, 5000);
++            panel.wallRefreshTimer = setInterval(() => panel.refreshCallPutWalls(''), 60_000);
++          }
++
+           // Big Flow needs an options chain, which doesn't exist for
+           // futures - without this, it silently errors in a loop (a
+           // watch_big_flow request that can never succeed) every time a
+@@ -5551,7 +5620,7 @@
+           els.gexFlipLabel.style.display = 'none';
+           els.gexMagnetLabel.style.display = 'none';
+           panel.gexStrikeData = [];
+-        } else if (els.expirationSelect.value) {
++        } else if (els.expirationSelect.value || optionsUnderlyingFor(panel.symbol)) {
+           // Re-fetch and redraw fresh rather than trying to resurrect
+           // stale data - simplest way to get the lines back correctly.
+           panel.refreshCallPutWalls(els.expirationSelect.value);
+@@ -5560,6 +5629,27 @@
+         saveChartSettings(panel);
+       });
+ 
++      els.flowLevelsToggleCheckbox.addEventListener('change', () => {
++        panel.flowLevelsEnabled = els.flowLevelsToggleCheckbox.checked;
++        if (!panel.flowLevelsEnabled) {
++          // The lines are only drawn / removed inside refreshCallPutWalls, so switching off has to take them down here.
++          if (panel.gexCallWallLine) { candlestickSeries.removePriceLine(panel.gexCallWallLine); panel.gexCallWallLine = null; }
++          if (panel.gexPutWallLine) { candlestickSeries.removePriceLine(panel.gexPutWallLine); panel.gexPutWallLine = null; }
++          if (panel.gexMagnetLine) { candlestickSeries.removePriceLine(panel.gexMagnetLine); panel.gexMagnetLine = null; }
++          if (panel.highAreaLine) { candlestickSeries.removePriceLine(panel.highAreaLine); panel.highAreaLine = null; }
++          if (panel.lowAreaLine) { candlestickSeries.removePriceLine(panel.lowAreaLine); panel.lowAreaLine = null; }
++          panel.gexCallWallPrice = null;
++          panel.gexPutWallPrice = null;
++          panel.gexMagnetPrice = null;
++          panel.highAreaPrice = null;
++          panel.lowAreaPrice = null;
++          panel.positionWallLabels();
++        } else if (els.expirationSelect.value || optionsUnderlyingFor(panel.symbol)) {
++          panel.refreshCallPutWalls(els.expirationSelect.value);   // redraw fresh
++        }
++        saveChartSettings(panel);
++      });
++
+       els.macdToggleCheckbox.addEventListener('change', () => {
+         panel.macdEnabled = els.macdToggleCheckbox.checked;
+         panel.updateMacd(panel.closeHistory);
