@@ -1553,7 +1553,7 @@
     const flowMarkerColor = (r, g, b) => `rgba(${r}, ${g}, ${b}, ${FLOW_MARKER_ALPHA})`;
     const FLOW_COLOR_UP = flowMarkerColor(0, 200, 83);     // green  (same hue as #00c853) - bought calls, bought stock/futures
     const FLOW_COLOR_DOWN = flowMarkerColor(255, 82, 82);  // red    (same hue as #ff5252) - bought puts, sold stock/futures
-    const FLOW_COLOR_SOLD = flowMarkerColor(0, 229, 255);  // cyan   (same hue as #00e5ff) - sold options
+    const FLOW_COLOR_SOLD = 'rgb(0, 229, 255)';            // bright solid cyan (#00e5ff) - sold options; fully opaque so a sell marker stands out like (or more than) a buy marker
 
     // ---- Flow markers on the chart: ONE arrow per candle and side, with the labels stacked beside it ----
     // Every flow used to be its own arrow with its own text, so a burst of flows stacked a column of arrows on one
