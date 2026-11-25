@@ -1549,7 +1549,7 @@
     const MARKER_SIZE = 1; // larger = bigger arrow + further from the candle body (single control, linked together)
     // Chart flow markers (the arrow AND its text label are drawn in one color) are deliberately see-through so the
     // candles stay clearly visible. 1 = fully solid, lower = dimmer (was 0.45, brightened a step to 0.6).
-    const FLOW_MARKER_ALPHA = 0.6;
+    const FLOW_MARKER_ALPHA = 1;
     const flowMarkerColor = (r, g, b) => `rgba(${r}, ${g}, ${b}, ${FLOW_MARKER_ALPHA})`;
     const FLOW_COLOR_UP = flowMarkerColor(0, 200, 83);     // green  (same hue as #00c853) - bought calls, bought stock/futures
     const FLOW_COLOR_DOWN = flowMarkerColor(255, 82, 82);  // red    (same hue as #ff5252) - bought puts, sold stock/futures
